@@ -26,6 +26,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Rust gate: hashFiles() is only valid in STEP-level if; compute the
+  #    condition here and pass it to the Rust jobs via needs-context outputs
+  #    (needs outputs ARE valid in job-level if). This avoids the workflow
+  #    startup-validation failure observed in run #1 — see session log
+  #    2026-10-24-01 "CI first run" for the diagnosis trail. ────────────────
+  rust-gate:
+    name: Rust workspace gate (activates Rust jobs at M0)
+    runs-on: ubuntu-latest
+    outputs:
+      has_rust: ${{ steps.check.outputs.has_rust }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: check
+        run: |
+          if [ -n "${{ hashFiles('Cargo.toml') }}" ]; then
+            echo "has_rust=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_rust=false" >> "$GITHUB_OUTPUT"
+            echo "Phase 0: no Cargo workspace yet — Rust gates intentionally not run (this is not a pass claim)."
+          fi
+
   # ── Phase-0 gate: repository/docs validation (always real) ────────────────
   docs-validation:
     name: Docs & repo validation (phase 0)
@@ -71,7 +92,8 @@ jobs:
   # claim to pass. The `if:` condition turns them on automatically at M0.
   rust-fmt-clippy:
     name: Rust fmt + clippy (activates at M0)
-    if: hashFiles('Cargo.toml') != ''
+    needs: rust-gate
+    if: needs.rust-gate.outputs.has_rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,7 +106,8 @@ jobs:
 
   rust-tests:
     name: Rust tests ${{ matrix.os }} (activates at M0)
-    if: hashFiles('Cargo.toml') != ''
+    needs: rust-gate
+    if: needs.rust-gate.outputs.has_rust == 'true'
     strategy:
       fail-fast: false
       matrix:
