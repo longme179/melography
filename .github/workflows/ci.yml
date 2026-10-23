@@ -1,0 +1,123 @@
+# MELOGRAPHY CI — honest Phase-0 gates.
+#
+# Design rules (docs/RELEASING.md §6, skills/cross-platform-ci):
+#   * Every job runs real commands whose exit codes mean something.
+#   * Phase-conditional jobs use explicit `if:` conditions — Rust gates stay
+#     skipped (and are REPORTED as skipped) until Cargo.toml exists (M0).
+#   * No publish, no release, no push triggers beyond PR/push-to-branch.
+#   * Actions pinned by commit SHA (verified 2026-10-24, see RELEASING §6).
+#   * Least privilege: workflow-level read-all; nothing writes.
+#   * No third-party actions beyond the two official ones pinned below; the
+#     Rust jobs use the runner's preinstalled rustup (respects
+#     rust-toolchain.toml when the workspace exists).
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: ["agent/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Rust gate: hashFiles() is only valid in STEP-level if; compute the
+  #    condition here and pass it to the Rust jobs via needs-context outputs
+  #    (needs outputs ARE valid in job-level if). This avoids the workflow
+  #    startup-validation failure observed in run #1 — see session log
+  #    2026-10-24-01 "CI first run" for the diagnosis trail. ────────────────
+  rust-gate:
+    name: Rust workspace gate (activates Rust jobs at M0)
+    runs-on: ubuntu-latest
+    outputs:
+      has_rust: ${{ steps.check.outputs.has_rust }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: check
+        run: |
+          if [ -n "${{ hashFiles('Cargo.toml') }}" ]; then
+            echo "has_rust=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_rust=false" >> "$GITHUB_OUTPUT"
+            echo "Phase 0: no Cargo workspace yet — Rust gates intentionally not run (this is not a pass claim)."
+          fi
+
+  # ── Phase-0 gate: repository/docs validation (always real) ────────────────
+  docs-validation:
+    name: Docs & repo validation (phase 0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install YAML validator
+        run: pip install --disable-pip-version-check pyyaml
+      - name: Validate docs inventory, parsers, links, secrets
+        run: python3 scripts/validate_docs.py
+      - name: Shell syntax
+        run: bash -n scripts/fetch_refs.sh
+      - name: Python compile
+        run: python3 -m py_compile scripts/fetch_refs.py scripts/validate_docs.py
+
+  # ── Cross-OS tooling smoke (real commands on all 3 desktop OSes; catches
+  #    platform breakage of the tooling itself before Rust exists) ───────────
+  tooling-matrix:
+    name: Tooling smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install YAML validator
+        run: pip install --disable-pip-version-check pyyaml
+      - name: Validate docs (full parse + links + secrets)
+        run: python scripts/validate_docs.py
+      - name: fetch_refs dry list (no network)
+        run: python scripts/fetch_refs.py --list
+
+  # ── Rust gates: ACTIVATE ONLY WHEN THE WORKSPACE EXISTS (M0) ──────────────
+  # These jobs intentionally report "skipped" until Cargo.toml lands. This is
+  # the honest state: no Rust code exists in Phase 0, so no Rust test may
+  # claim to pass. The `if:` condition turns them on automatically at M0.
+  rust-fmt-clippy:
+    name: Rust fmt + clippy (activates at M0)
+    needs: rust-gate
+    if: needs.rust-gate.outputs.has_rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Activate pinned toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  rust-tests:
+    name: Rust tests ${{ matrix.os }} (activates at M0)
+    needs: rust-gate
+    if: needs.rust-gate.outputs.has_rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Activate pinned toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain
+      - name: Tests
+        run: cargo test --workspace
+      # GPU tests are NOT run in CI (no GPU runners) — the parity harness runs
+      # CPU only; GPU verification happens on owner devices (PLAN §5 risk 6).

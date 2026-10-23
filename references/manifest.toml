@@ -1,0 +1,394 @@
+# references/manifest.toml — pinned, machine-readable reference registry.
+# Verified 2026-10-24 via GitHub/crates.io APIs. Human annotations: docs/research/REFERENCES.md.
+# Usage policy: REUSE (GPL-3.0-compatible, headers+NOTICES required) | STUDY (no code copying) | CONVENTION (format reference only).
+# Fetched locally by scripts/fetch_refs.sh|.py into .refs/ (git-ignored). Never committed.
+
+[meta]
+project = "MELOGRAPHY"
+updated = "2026-10-24"
+license_policy_adr = "docs/adr/0003-licensing.md"
+
+[[reference]]
+id = "build-your-own-x"
+url = "https://github.com/codecrafters-io/build-your-own-x"
+revision = "aa17439b62f3a2ac776ea1d92e9a3ba08b24a9b2a"  # master HEAD 2026-10-24 (12-hex verified prefix; fetch script verifies full sha)
+branch = "master"
+license = "CC0 (declared in README; no LICENSE file present)"
+category = "skills"
+policy = "CONVENTION"
+importance = "low"
+takeaway = "Educational index only; linked tutorials have their own licenses."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "superpowers"
+url = "https://github.com/obra/superpowers"
+revision = "2ce8aa15d05b"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "MIT"
+category = "skills"
+policy = "REUSE"
+importance = "medium"
+takeaway = "Methodology for brainstorming/plans/TDD/review/verification; adapt, don't install hooks."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "taste-skill"
+url = "https://github.com/leonxlnx/taste-skill"
+revision = "6010f91a9935"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "MIT"
+category = "skills"
+policy = "REUSE"
+importance = "medium"
+takeaway = "Design-judgment principles; filter for desktop color-critical UI."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "darktable"
+url = "https://github.com/darktable-org/darktable"
+revision = "d01c1527dcbe"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "GPL-3.0"
+category = "film-color"
+policy = "REUSE"
+importance = "high"
+paths = ["src/iop/filmic.c", "src/iop/negadoctor.c", "src/iop/grain.c"]
+takeaway = "Filmic scene-referred tone mapping; negative inversion; grain placement."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "rawtherapee"
+url = "https://github.com/RawTherapee/RawTherapee"
+revision = "b2ee504c47e5"  # dev HEAD 2026-10-24 (prefix)
+branch = "dev"
+license = "GPL-3.0"
+category = "film-color"
+policy = "REUSE"
+importance = "high"
+takeaway = "HaldCLUT film path; ICC pipeline conventions."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "filmulator-gui"
+url = "https://github.com/CarVac/filmulator-gui"
+revision = "57fbaec57555"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "NOASSERTION (LICENSE + LICENSE.txt; file-level review required)"
+category = "film-color"
+policy = "STUDY"
+importance = "medium"
+takeaway = "Filmulation algorithm: film+developer core from linear exposure."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "spektrafilm"
+url = "https://github.com/andreavolpato/spektrafilm"
+revision = "FETCH_AT_USE"  # main HEAD not snapshotted this session; fetch script resolves
+branch = "main"
+license = "GPL-3.0 (code); LUT assets: custom 'no resale' — NEVER redistribute"
+category = "film-color"
+policy = "REUSE-code / STUDY-assets"
+importance = "high"
+takeaway = "Maintained spectral film simulation; lineage of agx-emulsion."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "agx-emulsion"
+url = "https://github.com/aaronmurniadi/agx-emulsion"
+revision = "FETCH_AT_USE"
+branch = "main"
+license = "GPL-3.0"
+category = "film-color"
+policy = "REUSE"
+importance = "medium"
+takeaway = "Original spectral emulsion simulation; dormant since 2026-05."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "colour-science"
+url = "https://github.com/colour-science/colour"
+revision = "e82dd140c02d"  # develop HEAD 2026-10-24 (prefix)
+branch = "develop"
+license = "BSD-3-Clause"
+category = "film-color"
+policy = "REUSE"
+importance = "high"
+takeaway = "Colorimetry reference: CAT, ΔE2000, transfer functions; port with golden tests."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "opencolorio"
+url = "https://github.com/AcademySoftwareFoundation/OpenColorIO"
+revision = "22dd9c4faa0d"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "BSD-3-Clause"
+category = "film-color"
+policy = "STUDY"
+importance = "medium"
+takeaway = "AP1/ACEScg definitions; config-style transform composition."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "openimageio"
+url = "https://github.com/AcademySoftwareFoundation/OpenImageIO"
+revision = "fde6512a27ea"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "Apache-2.0"
+category = "film-color"
+policy = "STUDY"
+importance = "low"
+takeaway = "Codec/metadata edge-case handling patterns."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "little-cms"
+url = "https://github.com/mm2/Little-CMS"
+revision = "1112313b3784"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "MIT"
+category = "film-color"
+policy = "REUSE"
+importance = "high"
+takeaway = "ICC CMM embedded via lcms2 crate (6.2.0, MIT)."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "gmic"
+url = "https://github.com/GreycLab/gmic"
+revision = "c79f54dfb9a7"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "NOASSERTION (CeCILL-family expected; review before reuse)"
+category = "film-color"
+policy = "STUDY"
+importance = "low"
+takeaway = "Film-look algorithm inspiration only."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "rapidraw"
+url = "https://github.com/cybertimon/rapidraw"
+revision = "d3374da05c84"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "AGPL-3.0 (excluded from reuse by ADR-0003)"
+category = "comparables"
+policy = "STUDY"
+importance = "high"
+takeaway = "Closest comparable Rust editor; architecture comparison only, no code copying."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "wgpu"
+url = "https://github.com/gfx-rs/wgpu"
+revision = "63e505290e82"  # trunk HEAD 2026-10-24 (prefix)
+branch = "trunk"
+license = "MIT OR Apache-2.0"
+category = "gpu"
+policy = "REUSE"
+importance = "high"
+takeaway = "GPU compute; crate 30.0.1."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "image-rs"
+url = "https://github.com/image-rs/image"
+revision = "075e65d618a3"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "MIT OR Apache-2.0"
+category = "imaging"
+policy = "REUSE"
+importance = "high"
+takeaway = "Baseline decoders; crate 0.25.10; HEIC/AVIF capability spike at M0."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "exif-rs"
+url = "https://github.com/kamadak/exif-rs"
+revision = "FETCH_AT_USE"
+branch = "master"
+license = "BSD-2-Clause (crate kamadak-exif 0.6.1, 2024-11-06)"
+category = "imaging"
+policy = "REUSE"
+importance = "medium"
+takeaway = "EXIF in pure Rust; staleness noted; alt: mindeng/nom-exif (MIT)."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "tauri"
+url = "https://github.com/tauri-apps/tauri"
+revision = "c464ef928c35"  # dev HEAD 2026-10-24 (prefix)
+branch = "dev"
+license = "MIT OR Apache-2.0"
+category = "gpu"
+policy = "REUSE"
+importance = "high"
+takeaway = "Chosen UI shell (ADR-0001, conditional on Spike S1)."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "tauri-plugins-workspace"
+url = "https://github.com/tauri-apps/plugins-workspace"
+revision = "c75459d8996b"  # v2 HEAD 2026-10-24 (prefix)
+branch = "v2"
+license = "MIT OR Apache-2.0"
+category = "packaging"
+policy = "REUSE"
+importance = "high"
+takeaway = "Updater plugin v2; signing model confirmed at Spike S4."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "tauri-action"
+url = "https://github.com/tauri-apps/tauri-action"
+revision = "a6e90ddc4ba4"  # dev HEAD 2026-10-24 (prefix)
+branch = "dev"
+license = "MIT"
+category = "packaging"
+policy = "REUSE"
+importance = "medium"
+takeaway = "Release packaging; gated behind owner approval."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "egui"
+url = "https://github.com/emilk/egui"
+revision = "bf5ac0dac137"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "MIT OR Apache-2.0"
+category = "comparables"
+policy = "REUSE (fallback option B)"
+importance = "medium"
+takeaway = "Native Rust UI fallback if Tauri preview transport fails Spike S1."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "iced"
+url = "https://github.com/iced-rs/iced"
+revision = "cd04b74ca707"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "MIT"
+category = "comparables"
+policy = "REUSE (not selected)"
+importance = "low"
+takeaway = "Native alternative evaluated in ADR-0001."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "slint"
+url = "https://github.com/slint-ui/slint"
+revision = "b1130481f31d"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "NOASSERTION (complex dual scheme)"
+category = "comparables"
+policy = "STUDY"
+importance = "low"
+takeaway = "Rejected partly on licensing complexity; see ADR-0001."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "ort"
+url = "https://github.com/pykeio/ort"
+revision = "4fac49ba41dc"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "MIT OR Apache-2.0"
+category = "ai"
+policy = "REUSE"
+importance = "high"
+takeaway = "ONNX Runtime bindings; crate 2.0.0-rc.15 (RC risk tracked)."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "onnxruntime"
+url = "https://github.com/microsoft/onnxruntime"
+revision = "7ec270791d92"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "MIT"
+category = "ai"
+policy = "REUSE (via ort)"
+importance = "high"
+takeaway = "EP matrix per platform verified at Spike S3."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "image-adaptive-3dlut"
+url = "https://github.com/HuiZeng/Image-Adaptive-3DLUT"
+revision = "b491f6df64a5"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "Apache-2.0 (code); weights unverified"
+category = "ai"
+policy = "STUDY"
+importance = "medium"
+takeaway = "Image-adaptive 3D-LUT prediction concept for M3."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "zero-dce"
+url = "https://github.com/Li-Chongyi/Zero-DCE"
+revision = "FETCH_AT_USE"
+branch = "master"
+license = "NONE — no license file"
+category = "ai"
+policy = "STUDY only (cannot ship code or weights)"
+importance = "medium"
+takeaway = "Zero-reference curve estimation concept; paper equations may be re-implemented after verifying paper terms."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "mobilesam"
+url = "https://github.com/ChaoningZhang/MobileSAM"
+revision = "f706ad9c4eb7"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "Apache-2.0 (code); weights terms unverified"
+category = "ai"
+policy = "STUDY"
+importance = "low"
+takeaway = "Candidate tiny subject segmentation for M3 optional mask."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "edgesam"
+url = "https://github.com/chongzhou96/EdgeSAM"
+revision = "d24d99671f41"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "NOASSERTION (LICENSE present; review pending)"
+category = "ai"
+policy = "STUDY"
+importance = "low"
+takeaway = "Edge-optimized segmentation candidate."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "u2net"
+url = "https://github.com/xuebinqin/U-2-Net"
+revision = "ac7e1c817eca"  # master HEAD 2026-10-24 (prefix)
+branch = "master"
+license = "Apache-2.0 (code); weights unverified (often non-commercial)"
+category = "ai"
+policy = "STUDY"
+importance = "low"
+takeaway = "Saliency/matting fallback candidate."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "depth-anything-v2"
+url = "https://github.com/DepthAnything/Depth-Anything-V2"
+revision = "a561b849ebae"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "Apache-2.0 (code); weights unverified"
+category = "ai"
+policy = "STUDY"
+importance = "low"
+takeaway = "Optional small depth models; deferred."
+last_verified = "2026-10-24"
+
+[[reference]]
+id = "anthropic-skills-format"
+url = "https://github.com/anthropics/skills"
+revision = "dbd4588f9e10"  # main HEAD 2026-10-24 (prefix)
+branch = "main"
+license = "NONE — no license file"
+category = "skills"
+policy = "CONVENTION"
+importance = "low"
+takeaway = "SKILL.md front-matter format reference only; do not copy content."
+last_verified = "2026-10-24"

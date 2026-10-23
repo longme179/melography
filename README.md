@@ -23,4 +23,4 @@ Planning documentation (architecture, color pipeline, film model, ADRs, roadmap)
 
 ## License
 
-**Undecided** — tracked in `docs/adr/0003-licensing.md` (Phase-0 branch). Until the owner decides: original clean-room implementations only; no third-party source code is copied into this repository.
+**GPL-3.0-or-later** — selected by the project owner on 2026-10-24 (recorded in `docs/adr/0003-licensing.md`). This project is a personal, non-commercial passion project and reuses code from GPL-3.0 projects (darktable, spektrafilm, agx-emulsion) and permissively licensed libraries (MIT / Apache-2.0 / BSD), with original copyright headers preserved and attribution tracked in `THIRD_PARTY_NOTICES.md` (introduced with the first reused code, M0+). Non-code assets (LUT files, film scans, model weights) are licensed independently from source code and are vetted individually before distribution.
