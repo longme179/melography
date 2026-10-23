@@ -1,5 +1,3 @@
-//! # melography-gpu
-//!
 //! GPU rendering for MELOGRAPHY: WGSL kernels mirroring the CPU oracle, the
 //! render context, and the preview transport (ADR-0001). **M0 scope:** the
 //! adapter probe and the staging-readback benchmark behind the `wgpu`
@@ -37,9 +35,13 @@ pub struct AdapterReport {
 #[cfg(feature = "wgpu")]
 #[must_use]
 pub fn enumerate_adapters() -> Vec<AdapterReport> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-    instance
-        .enumerate_adapters(wgpu::Backends::all())
+    let desc = wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    };
+    let instance = wgpu::Instance::new(desc);
+    let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    adapters
         .into_iter()
         .map(|a| {
             let info = a.get_info();

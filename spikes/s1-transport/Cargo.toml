@@ -1,0 +1,17 @@
+[package]
+name = "s1-transport-spike"
+description = "Spike S1: preview-transport budget evidence — GPU readback throughput, frame encode cost, payload sizes (issue #3)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+melography-gpu = { workspace = true, features = ["wgpu"] }
+melography-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+image = { workspace = true, features = ["png", "webp"] }

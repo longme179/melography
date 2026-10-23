@@ -34,27 +34,29 @@ pub struct ReadbackResult {
 }
 
 /// Run the readback benchmark `iterations` times on the best adapter
-/// available; returns `None` when no adapter exists (honest skip for the
-/// spike to report).
+/// available; returns `Err(GpuError::NoAdapter)` when none exists (honest
+/// skip for the spike to report).
 pub fn readback_bench(
     width: u32,
     height: u32,
     iterations: u32,
 ) -> Result<Vec<ReadbackResult>, GpuError> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        })
-        .blocking_recv() // CLI/bench context; no async runtime here
-        .ok_or(GpuError::NoAdapter)?;
+    let desc = wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    };
+    let instance = wgpu::Instance::new(desc);
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+    }))
+    .map_err(|_| GpuError::NoAdapter)?;
 
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor::default(), None, None)
-        .blocking_recv()
-        .map_err(|e| GpuError::Wgpu(e.to_string()))?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+            .map_err(|e| GpuError::Wgpu(e.to_string()))?;
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("s1-fill"),
@@ -83,7 +85,7 @@ pub fn readback_bench(
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("s1-bg"),
-            layout: pipeline.get_bind_group_layout(0),
+            layout: &pipeline.get_bind_group_layout(0),
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: buffer.as_entire_binding(),
@@ -111,15 +113,18 @@ pub fn readback_bench(
             let _ = sender.send(r);
         });
         device
-            .poll(wgpu::PollType::Wait)
+            .poll(wgpu::PollType::wait_indefinitely())
             .map_err(|e| GpuError::Wgpu(e.to_string()))?;
         receiver
             .recv()
             .map_err(|_| GpuError::Wgpu("map callback lost".into()))?
             .map_err(|e| GpuError::Wgpu(e.to_string()))?;
         {
-            let data = slice.get_mapped_range();
-            // touch the data so the read is not optimized away
+            let data = slice
+                .get_mapped_range()
+                .map_err(|e| GpuError::Wgpu(e.to_string()))?;
+            // touch the data so the read is not optimized away; BufferView
+            // derefs to &[u8] (wgpu 30)
             let checksum = data
                 .iter()
                 .fold(0u64, |acc, b| acc.wrapping_add(u64::from(*b)));
@@ -139,6 +144,7 @@ pub fn readback_bench(
 }
 
 /// The adapter this bench would use (for the report).
+#[must_use]
 pub fn best_adapter() -> Option<AdapterReport> {
     crate::enumerate_adapters().into_iter().next()
 }

@@ -21,6 +21,8 @@ members = [
     "crates/ai",
     "crates/presets",
     "crates/cli",
+    "spikes/s1-transport",
+    "spikes/s3-ort",
 ]
 exclude = ["spikes/s4-updater", "spikes/heif-probe"]
 
