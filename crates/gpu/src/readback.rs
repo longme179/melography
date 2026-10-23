@@ -75,12 +75,23 @@ pub fn readback_bench(
     let mut results = Vec::with_capacity(iterations as usize);
 
     for _ in 0..iterations {
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("s1-out"),
+        // WebGPU readback idiom (validated on CI macos/windows adapters):
+        // compute writes a STORAGE buffer; MAP_READ may only combine with
+        // COPY_DST — so the bytes travel storage --copy--> readback buffer,
+        // and only the readback buffer is mapped. A single buffer with
+        // STORAGE|COPY_SRC|MAP_READ is rejected by wgpu validation (the
+        // first CI run caught exactly that; no-adapter environments never
+        // exercise this path).
+        let storage = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("s1-storage"),
             contents: &vec![0u8; elements * 4],
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::MAP_READ,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("s1-readback"),
+            size: (elements * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -88,7 +99,7 @@ pub fn readback_bench(
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: buffer.as_entire_binding(),
+                resource: storage.as_entire_binding(),
             }],
         });
 
@@ -105,9 +116,10 @@ pub fn readback_bench(
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(elements.div_ceil(64) as u32, 1, 1);
         }
+        encoder.copy_buffer_to_buffer(&storage, 0, &readback, 0, (elements * 4) as u64);
         queue.submit(Some(encoder.finish()));
 
-        let slice = buffer.slice(..);
+        let slice = readback.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = sender.send(r);
@@ -130,7 +142,7 @@ pub fn readback_bench(
                 .fold(0u64, |acc, b| acc.wrapping_add(u64::from(*b)));
             assert_ne!(checksum, u64::MAX, "mapped range must exist");
         }
-        buffer.unmap();
+        readback.unmap();
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         results.push(ReadbackResult {
             width,
