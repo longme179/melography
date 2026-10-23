@@ -1,0 +1,69 @@
+# --- Secrets & credentials (NEVER commit) ---
+*.pem
+*.key
+*.p12
+*.pfx
+*_rsa
+.env
+.env.*
+secrets/
+credentials
+credentials.*
+*gh_token*
+*github_pat*
+app-signing-key*
+*.minisign
+
+# --- Local reference cache (populated by scripts/fetch_refs.sh|py; never committed) ---
+.refs/
+
+# --- Rust (M0+) ---
+/target/
+**/*.rs.bk
+# NOTE: Cargo.lock MUST be committed once the workspace exists (application repo).
+
+# --- Node / webview UI (M0+) ---
+node_modules/
+dist/
+.vite/
+.turbo/
+*.tsbuildinfo
+
+# --- OS junk ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# --- Editors / IDE ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Python tooling ---
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+
+# --- Local scratch & logs ---
+/scratch/
+*.local
+*.log
+
+# --- Large / unvetted assets never enter git history ---
+/tests/assets/**/*.original
+/tests/assets/**/UNREVIEWED/
+*.zip
+*.tar.gz
+*.7z
+
+# --- Exported model weights are downloaded at runtime, never committed ---
+*.onnx
+*.ort
+*.safetensors
