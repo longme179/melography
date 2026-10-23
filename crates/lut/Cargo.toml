@@ -1,0 +1,14 @@
+[package]
+name = "melography-lut"
+description = "LUT engine (.cube parse/validate/tetrahedral + library) — M0: type skeleton; parser lands at M1 (issue #7)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+melography-core = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }

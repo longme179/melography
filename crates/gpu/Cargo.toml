@@ -1,0 +1,30 @@
+[package]
+name = "melography-gpu"
+description = "wgpu/WGSL render context + CPU↔GPU parity harness — M0: adapter probe & readback bench behind the `wgpu` feature"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+melography-core = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+wgpu = { version = "30", optional = true, default-features = false, features = [
+    "wgsl",
+    "vulkan",
+    "gles",
+    "metal",
+    "dx12",
+] }
+
+[features]
+default = []
+# Compile the real wgpu backend (used by spikes/s1-transport and, later, the
+# parity harness). Off by default so the processing workspace stays light.
+wgpu = ["dep:wgpu"]
+
+[dev-dependencies]
+serde_json = { workspace = true }

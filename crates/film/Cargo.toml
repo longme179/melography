@@ -1,0 +1,17 @@
+[package]
+name = "melography-film"
+description = "Film emulation chain (FILM_MODEL.md) — M0: identity chain + versioned params skeleton; stages A–I land at M2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+melography-core = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,7 @@
+{
+  "lcms2_version": 2190,
+  "chart_sha256_f32": "59bbe0cfd3f77a371c7d65349fdcb11399b1d6f762b104c403ec195790125ff4",
+  "fastpath_ap1_sha256": "abcfd773eaa0c89163dc538faf957dbe681ed962edfefa66192fe3afc770a96b",
+  "lcms_ap1_sha256": "2afd89d629a25011b3dcdd2b2859c4718d78849c5fb971a247f07d493b388c1a",
+  "roundtrip_u16_sha256": "b81a8be94d8a4c5064aa36997a538c557a8c4f5130b935a77c61bc9e1a7c0b6a"
+}

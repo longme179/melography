@@ -1,0 +1,18 @@
+[package]
+name = "melography-ai"
+description = "Local AI assistance (ADR-0004) — M0: model manifest schema + vetting gate skeleton; inference arrives at M3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+melography-core = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+semver = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
