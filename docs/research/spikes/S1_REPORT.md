@@ -11,10 +11,24 @@ member) + `crates/gpu` `wgpu` feature (wgpu 30.0.1, pollster).
 | Leg | Environment | Result |
 |---|---|---|
 | adapter enumeration | this sandbox (linux x86_64, 2 cores, no GPU) | **0 adapters — honest skip** (the spike reports it, never fabricates; CI assertions enforce exactly that semantics) |
-| staging readback (compute → map) | same | **skipped** (no adapter) — numbers come from CI (macos-latest exposes Metal) and owner devices; the CI test runs the real benchmark wherever an adapter exists and asserts sane throughput |
+| staging readback (compute → copy → map) | **CI runners with real adapters** — first CI run exercised it and **caught a real wgpu usage bug** (see below) | **runs and validates green on macos ('Apple Paravirtual device', Metal) and windows ('Microsoft Basic Render Driver', WARP)**; ubuntu runners and the sandbox have no adapter (honest skip) |
 | CPU frame encode: raw / PNG / WebP-lossless @1080p/1440p | same | measured (below) |
 | payload sizes | same | measured (below) |
 | webview IPC hop + canvas blit | — | **not measurable headless** — deferred to the M1 app shell; the budget math below uses only measured legs |
+
+### The bug the CI adapters caught (evidence, not luck)
+
+The first CI run of the activated gates rejected our original buffer
+usage (`MAP_READ | COPY_SRC | STORAGE` on one buffer) with wgpu's
+validation: *"MAP usage can only be combined with the opposite COPY"*.
+No-adapter environments (sandbox, ubuntu runners) can never catch that
+class. The harness now uses the standard **two-buffer idiom** — compute
+writes a `STORAGE|COPY_SRC` buffer, the encoder copies it into a
+`COPY_DST|MAP_READ` buffer, and only the latter is mapped
+(`crates/gpu/src/readback.rs`, commit `1668e76`). The passing CI run
+on macos/windows is the validation; per-run numeric readback
+throughput is printed into CI logs via `-- --nocapture` from the next
+run onward.
 
 ## Measured numbers (deterministic synthetic RGBA8 gradient; median of runs)
 

@@ -118,7 +118,7 @@ jobs:
       - name: Activate pinned toolchain (rust-toolchain.toml)
         run: rustup show active-toolchain
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --workspace -- --nocapture
       # GPU tests are NOT run in CI (no GPU runners) — the parity harness runs
       # CPU only; GPU verification happens on owner devices (PLAN §5 risk 6).
 

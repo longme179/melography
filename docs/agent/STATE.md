@@ -12,13 +12,12 @@ gate.
 
 ## Branch / PR / HEAD
 
-- Working branch: `agent/m0-skeleton` (local; NOT pushed yet)
-- HEAD: see `git log` — last commits: workspace+golden battery
-  (`90f247e`), S1+S3 harnesses (`c49da1c`), S4+HEIF probe (`6699d97`),
-  CI+deny (`b0fb191`), plus docs/memory commit(s) at session close.
+- Working branch: `agent/m0-skeleton` (pushed)
+- **Draft PR #18:** https://github.com/longme179/melography/pull/18 (awaiting owner review; do not merge without approval)
 - Phase 0 PR #17 merged into `main` (`ce5108c`).
 - Branch protection on `main`: still NOT applied (PAT lacks
-  Administration:write, 403) — owner action stands.
+  Administration:write, 403) — owner action stands. Issue comments are
+  also 403 (PAT lacks Issues:write) — agent communicates via PR bodies.
 
 ## Verified completed tasks (M0 so far)
 
@@ -48,53 +47,35 @@ gate.
 9. ✅ PLAN §4 first re-pin from M0 measurements (GPU/webview lines stay
    provisional, marked as such)
 
+## CI status
+
+**GREEN (12/12 jobs) on `1668e76`** — the first fully-activated run:
+docs validation, tooling ×3, rust-gate, fmt+clippy, **cargo-deny**,
+Rust tests ×3 OS (macos 'Apple Paravirtual device' + windows 'Microsoft
+Basic Render Driver' adapters run the real S1 benchmark after the
+two-buffer idiom fix they themselves forced), S4 updater (+ live
+`/releases/latest` probe → 404 as expected with zero releases), HEIF
+probe. `-- --nocapture` added to rust-tests so future runs print the
+measurements into logs.
+
 ## Active work
 
-M0 close-out: commit docs/memory → push branch → draft PR (links
-issues #2 #3 #5 #6; #4 partially) → observe first real 3-OS CI run of
-the activated gates → append CI evidence to spike reports (S3 per-OS
-numbers, S1 macos adapter results if any) → request owner review.
-
-## Blockers
-
-- None technical. CI is the first run of the new jobs (cargo-deny,
-  spike-s4, spike-heif) — failures are expected to be fix-forward on
-  this same branch.
-
-## Assumptions (conservative defaults in effect)
-
-- GPL-3.0-or-later confirmed (owner, PR #17 merged with it).
-- Tauri 2 provisional (ADR-0001) — S1/S4 mechanics PASS so far; the
-  webview legs decide; egui fallback armed.
-- Reference hardware: CI runners + dev sandbox declared in PLAN §4;
-  owner's integrated-GPU laptops still to be declared.
-
-## Risks (top — full register PLAN §5)
-
-1. Webview preview transport unmeasured (S1 leg 2) → egui fallback
-   designed (ADR-0001); decision at M1 app shell, not later.
-2. GPU readback numbers absent until CI macos / owner devices.
-3. First CI run of 3 new jobs may need fix-forward iterations.
-4. Disk pressure in the dev sandbox (9.9 GB total) — build dirs are
-   the hog; keep `spikes/*/target` out of git (done) and clean between
-   heavy builds.
-
-## Decisions awaiting owner
-
-- OPEN_QUESTIONS #3–#10 defaults remain in effect; #2 (M0 PR review)
-  becomes actionable the moment the draft PR opens.
+None — M0 code+docs complete on the branch; awaiting owner review of
+PR #18 (and the two labeled-pending legs: S1 webview/GPU-owner-device,
+S2 webview — both tracked in the reports and issue #4).
 
 ## Next five atomic actions (in order)
 
-1. Commit docs/memory updates (this file + session log 02 + PLAN
-   re-pin + spike reports).
-2. Push `agent/m0-skeleton`; open **draft PR** → main (title marks
-   M0; body links #2 #3 #5 #6, notes #4 half-done).
-3. Watch the first CI run; fix-forward on the same branch; append
-   CI-measured evidence to S1/S3 reports.
-4. Comment on issue #4 with the webview-leg plan (xvfb at M1 shell,
-   owner devices) keeping it open.
-5. Hand off to owner review (Vietnamese summary + PR link).
+1. Owner reviews draft PR #18 (GPL already confirmed in chat; PR
+   merges with the branch as-is).
+2. Address PR review comments (small `docs:`/`fix:` commits, same
+   branch).
+3. On approval+merge: close #2 #3 #5 #6 (leave #4 open — webview leg);
+   start M1 per PLAN (editor shell MVP → S1/S2 webview legs ride it).
+4. At M1: run the webview double-transform detection (xvfb CI + owner
+   devices) and record it in S2_REPORT.md.
+5. Keep PLAN §4 provisional lines under review as owner hardware gets
+   declared.
 
 ## Environment notes for next agent
 
