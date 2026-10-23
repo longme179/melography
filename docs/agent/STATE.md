@@ -1,6 +1,6 @@
 # MELOGRAPHY — Agent State
 
-**Updated:** 2026-10-24T00:00:00Z (end of Phase-0 session 01) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
+**Updated:** 2026-10-23T18:55:00Z (end of Phase-0 session 01) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
 
 ## Current milestone
 
@@ -9,9 +9,10 @@
 ## Branch / PR / HEAD
 
 - Working branch: `agent/phase-0-foundations` (pushed)
-- Draft PR: see session log / repo PR list — *the agent records the exact PR number+URL in the session log after creation; if a PR number is absent there, no PR exists yet.*
-- HEAD at session end: recorded in `docs/agent/sessions/2026-10-24-01.md` (single source of truth for SHAs)
+- **Draft PR #17:** https://github.com/longme179/melography/pull/17 (awaiting owner review; do not merge without approval + GPL confirmation)
+- HEAD at session close: see session log `2026-10-24-01.md` §Handoff evidence (single source of truth for SHAs; CI-fixed commit `0292102`, followed by the final session-log commit)
 - `main`: single bootstrap commit `97210e0` (documented exception, REPO_AUDIT §2)
+- Branch protection on `main`: **NOT applied — PAT lacks Administration:write (403)**; owner must enable manually or grant scope (session log §Handoff evidence)
 
 ## Verified completed tasks (Phase 0)
 
@@ -22,9 +23,9 @@
 5. ✅ Core specs: ARCHITECTURE, COLOR_PIPELINE, FILM_MODEL, AI_MODELS, UX_SPEC, UX_DESIGN_TOKENS, RELEASING, PLAN (incl. traceability + risk register)
 6. ✅ Twelve skills + index; memory protocol (STATE, CONTEXT_INDEX, session log); CLAUDE.md pointer; .editorconfig
 7. ✅ Reference tooling: `scripts/fetch_refs.{sh,py}`; validation: `scripts/validate_docs.py`
-8. ✅ CI skeleton (3-OS honest Phase-0 gates) + issue/PR templates
+8. ✅ CI skeleton (3-OS honest Phase-0 gates) + issue/PR templates + milestones #1–#6 + labels + issues #1–#16 + draft PR #17
 9. ✅ License decision recorded: **GPL-3.0-or-later** (owner, chat 2026-10-24; ADR-0003) — awaiting PR confirmation
-10. ✅ Branch protection on `main` + `delete_branch_on_merge` (see session log for API outcomes)
+10. ⚠️ Branch protection on `main` — **ATTEMPTED, BLOCKED (PAT lacks Administration:write, HTTP 403)**; recorded as limitation with owner action; `delete_branch_on_merge` unapplied (same cause)
 
 ## Active work
 
@@ -54,7 +55,7 @@ None — Phase 0 closed. Next work requires owner approval (M0) or revision requ
 
 ## CI status
 
-Phase-0 `ci.yml` committed in this branch (docs validation on ubuntu + shell/python checks; 3-OS conditional matrix documented). **No CI run exists yet at time of writing** — first run triggers on PR creation; honest outcome recorded in session log afterwards.
+**Green with honest states (runs #2/#3 @ 0292102):** docs-validation success (real validate_docs.py on GitHub) · tooling smoke success ×3 OS · rust-gate success (has_rust=false, honest) · Rust jobs **skipped** (no workspace — intentional, visible, not a pass claim). First run failed (job-level hashFiles — invalid context); diagnosed + fixed + documented in session log. PR checks: passing.
 
 ## Next five atomic actions (for the next session, in order)
 
