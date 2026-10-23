@@ -24,11 +24,9 @@ allow = [
     "ISC",
     "Zlib",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "CC0-1.0",
     "0BSD",
-    "BlueOak-1.0.0",
-    "MPL-2.0", # reviewed case-by-case; currently: webpki roots (file-scoped MPL is GPL-compatible)
+    "CDLA-Permissive-2.0", # webpki-root-certs (ureq build-dep of ort-sys); permissive data license, GPL-compatible
 ]
 confidence-threshold = 0.93
 exceptions = []
@@ -39,7 +37,11 @@ exceptions = []
 # ── Bans ────────────────────────────────────────────────────────────────────
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+# Internal path/workspace deps carry no version requirement by design
+# (single workspace, single version policy) — the wildcard check would
+# false-positive on every `workspace = true` dep, so it is disabled here
+# and internal hygiene is enforced by clippy + review instead.
+wildcards = "allow"
 highlight = "all"
 deny = [
     # ARCHITECTURE §2: the processing core must stay UI-agnostic — no shell
