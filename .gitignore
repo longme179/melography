@@ -19,6 +19,9 @@ app-signing-key*
 
 # --- Rust (M0+) ---
 /target/
+# standalone spike crates live outside the workspace; their build dirs
+# must be ignored explicitly (root-anchored /target/ does not cover them)
+spikes/*/target/
 **/*.rs.bk
 # NOTE: Cargo.lock MUST be committed once the workspace exists (application repo).
 

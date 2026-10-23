@@ -1,0 +1,30 @@
+[package]
+name = "s4-updater-spike"
+description = "Spike S4: Tauri v2 updater dummy-channel roundtrip — mock-runtime app, throwaway minisign keypair, local HTTP channel, test channel only, no public release (issue #6, ADR-0005)"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/longme179/melography"
+authors = ["MELOGRAPHY project"]
+publish = false
+
+[dependencies]
+# default-features = false: NO wry/GTK — the mock runtime is CI-safe and
+# needs no system webview (this is exactly how tauri-plugin-updater itself
+# depends on tauri; verified in its Cargo.toml [dependencies.tauri])
+tauri = { version = "2.12", default-features = false, features = ["test"] }
+tauri-plugin-updater = "2"
+minisign = "0.10"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+# generate_context!() requires the OUT_DIR artifacts tauri-build produces
+# (it reads ./tauri.conf.json at the crate root)
+tauri-build = "2"
+
+[profile.release]
+# match the main workspace shape
+debug = true
