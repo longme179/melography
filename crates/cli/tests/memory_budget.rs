@@ -68,6 +68,10 @@ fn peak_rss_bytes() -> Option<(u64, &'static str)> {
             PagefileUsage: usize,
             PeakPagefileUsage: usize,
         }
+        // Psapi.lib provides GetProcessMemoryInfo on MSVC (the GNU
+        // toolchains ship it inside libkernel32 — the attribute is the
+        // MSVC-compatible spelling; caught by the Windows CI leg).
+        #[link(name = "psapi")]
         extern "system" {
             fn GetCurrentProcess() -> isize;
             fn GetProcessMemoryInfo(
