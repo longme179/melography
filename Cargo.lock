@@ -1103,6 +1103,7 @@ version = "0.0.1"
 dependencies = [
  "bytemuck",
  "clap",
+ "melography-ai",
  "melography-color",
  "melography-core",
  "melography-film",

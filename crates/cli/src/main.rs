@@ -17,8 +17,9 @@
 
 use clap::{Parser, Subcommand};
 use melography_cli::{
-    cmd_apply, cmd_bench, cmd_chart, cmd_film_apply, cmd_film_list, cmd_golden, cmd_lut_parse,
-    cmd_roundtrip, cmd_sidecar, ApplyFormat, ApplyOptions, FilmApplyOptions,
+    cmd_ai_delete, cmd_ai_install, cmd_ai_models, cmd_ai_suggest, cmd_ai_vet, cmd_apply, cmd_bench,
+    cmd_chart, cmd_film_apply, cmd_film_list, cmd_golden, cmd_lut_parse, cmd_roundtrip,
+    cmd_sidecar, ApplyFormat, ApplyOptions, FilmApplyOptions,
 };
 use melography_lut::stage::InsertionPoint;
 use melography_lut::LutEncoding;
@@ -105,6 +106,21 @@ enum Cmd {
         /// Skip sidecar writing.
         #[arg(long, default_value_t = false)]
         no_sidecar: bool,
+        /// Tone EV in stops (M3; see also `ai suggest`).
+        #[arg(long)]
+        tone_ev: Option<f32>,
+        /// Tone highlights, -100..100.
+        #[arg(long)]
+        tone_highlights: Option<f32>,
+        /// Tone shadows, -100..100.
+        #[arg(long)]
+        tone_shadows: Option<f32>,
+        /// Tone WB cone gains, "R,G,B" (e.g. "1.05,1.0,0.95").
+        #[arg(long)]
+        tone_wb: Option<String>,
+        /// Tone percentile shaping, "BLACK_SRC,BLACK_TGT,WHITE_SRC,WHITE_TGT".
+        #[arg(long)]
+        tone_shaping: Option<String>,
     },
     /// Load/migrate/inspect a `.melography.json` sidecar.
     Sidecar {
@@ -115,6 +131,12 @@ enum Cmd {
     Film {
         #[command(subcommand)]
         cmd: FilmCmd,
+    },
+    /// AI assistance (M3): baseline auto-lighting suggestions + model
+    /// manager / vetting gate (issues #13/#14).
+    Ai {
+        #[command(subcommand)]
+        cmd: AiCmd,
     },
 }
 
@@ -192,6 +214,60 @@ enum FilmCmd {
         /// Skip sidecar writing.
         #[arg(long, default_value_t = false)]
         no_sidecar: bool,
+        /// Tone EV in stops (applied before the film chain).
+        #[arg(long)]
+        tone_ev: Option<f32>,
+        /// Tone highlights, -100..100.
+        #[arg(long)]
+        tone_highlights: Option<f32>,
+        /// Tone shadows, -100..100.
+        #[arg(long)]
+        tone_shadows: Option<f32>,
+        /// Tone WB cone gains, "R,G,B".
+        #[arg(long)]
+        tone_wb: Option<String>,
+        /// Tone percentile shaping, "BLACK_SRC,BLACK_TGT,WHITE_SRC,WHITE_TGT".
+        #[arg(long)]
+        tone_shaping: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AiCmd {
+    /// Baseline auto-lighting suggestion for an image (JSON, model-free).
+    Suggest {
+        #[arg(long)]
+        input: PathBuf,
+        /// Analysis proxy long edge (ADR-0004 §5: ≤ 512).
+        #[arg(long, default_value_t = 512)]
+        proxy: u32,
+    },
+    /// Run the manifest vetting gate on a model manifest JSON (issue #14).
+    Vet {
+        #[arg(long)]
+        manifest: PathBuf,
+    },
+    /// Offline install: gate + SHA-256 + atomic install from a local file.
+    Install {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        weights: PathBuf,
+        /// Registry root directory.
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// List the model registry with states (AI_MODELS §6).
+    Models {
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// Delete a model (all files, immediately).
+    Delete {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        id: String,
     },
 }
 
@@ -202,6 +278,74 @@ enum LutCmd {
         #[arg(long)]
         file: PathBuf,
     },
+}
+
+/// Build `Option<ToneParams>` from the shared tone flag set — any flag
+/// present activates the stage; the rest default. Unknown vocabulary or
+/// malformed CSV fails fast (exit 2) with a precise message.
+fn tone_from_flags(
+    ev: Option<f32>,
+    highlights: Option<f32>,
+    shadows: Option<f32>,
+    wb: Option<String>,
+    shaping: Option<String>,
+) -> Option<melography_color::tone::ToneParams> {
+    use melography_color::tone::{ToneParams, WbGains};
+    if ev.is_none()
+        && highlights.is_none()
+        && shadows.is_none()
+        && wb.is_none()
+        && shaping.is_none()
+    {
+        return None;
+    }
+    let mut p = ToneParams {
+        ev: ev.unwrap_or(0.0),
+        highlights: highlights.unwrap_or(0.0),
+        shadows: shadows.unwrap_or(0.0),
+        ..ToneParams::default()
+    };
+    if let Some(wb) = wb {
+        let v: Vec<f32> = wb
+            .split(',')
+            .map(|s| s.trim().parse::<f32>())
+            .collect::<Result<_, _>>()
+            .unwrap_or_else(|e| {
+                eprintln!("error: --tone-wb expects R,G,B floats ({e})");
+                std::process::exit(2);
+            });
+        if v.len() != 3 {
+            eprintln!("error: --tone-wb expects exactly 3 values, got {}", v.len());
+            std::process::exit(2);
+        }
+        p.wb = Some(WbGains {
+            r: v[0],
+            g: v[1],
+            b: v[2],
+        });
+    }
+    if let Some(shaping) = shaping {
+        let v: Vec<f32> = shaping
+            .split(',')
+            .map(|s| s.trim().parse::<f32>())
+            .collect::<Result<_, _>>()
+            .unwrap_or_else(|e| {
+                eprintln!("error: --tone-shaping expects 4 floats ({e})");
+                std::process::exit(2);
+            });
+        if v.len() != 4 {
+            eprintln!(
+                "error: --tone-shaping expects BLACK_SRC,BLACK_TGT,WHITE_SRC,WHITE_TGT ({} values)",
+                v.len()
+            );
+            std::process::exit(2);
+        }
+        p.black_source = Some(v[0]);
+        p.black_target = Some(v[1]);
+        p.white_source = Some(v[2]);
+        p.white_target = Some(v[3]);
+    }
+    Some(p.sanitized())
 }
 
 fn main() {
@@ -236,6 +380,11 @@ fn main() {
             library,
             via_lcms,
             no_sidecar,
+            tone_ev,
+            tone_highlights,
+            tone_shadows,
+            tone_wb,
+            tone_shaping,
         } => {
             // Resolve vocabulary strings BEFORE touching pixels — unknown
             // identifiers must fail fast with a precise message.
@@ -281,6 +430,13 @@ fn main() {
                 library_root: library.unwrap_or_else(melography_cli::default_library_root),
                 via_lcms,
                 write_sidecar: !no_sidecar,
+                tone: tone_from_flags(
+                    tone_ev,
+                    tone_highlights,
+                    tone_shadows,
+                    tone_wb,
+                    tone_shaping,
+                ),
             })
         }
         Cmd::Sidecar { file } => cmd_sidecar(&file),
@@ -308,6 +464,11 @@ fn main() {
                 quality,
                 strip_h,
                 no_sidecar,
+                tone_ev,
+                tone_highlights,
+                tone_shadows,
+                tone_wb,
+                tone_shaping,
             } => {
                 use melography_film::profile::InversionPath;
                 let inversion = match inversion.as_deref() {
@@ -376,8 +537,26 @@ fn main() {
                     quality,
                     strip_h,
                     write_sidecar: !no_sidecar,
+                    tone: tone_from_flags(
+                        tone_ev,
+                        tone_highlights,
+                        tone_shadows,
+                        tone_wb,
+                        tone_shaping,
+                    ),
                 })
             }
+        },
+        Cmd::Ai { cmd } => match cmd {
+            AiCmd::Suggest { input, proxy } => cmd_ai_suggest(&input, proxy),
+            AiCmd::Vet { manifest } => cmd_ai_vet(&manifest),
+            AiCmd::Install {
+                manifest,
+                weights,
+                root,
+            } => cmd_ai_install(&manifest, &weights, &root),
+            AiCmd::Models { root } => cmd_ai_models(&root),
+            AiCmd::Delete { root, id } => cmd_ai_delete(&root, &id),
         },
     };
     println!(
