@@ -32,21 +32,11 @@ pub struct OpenSession {
 /// Film Lab state (M2, issue #10/#11 UX legs): the selected stock (data,
 /// not code — loaded from the shipped registry) + recipe-level knobs.
 /// `None` stock = film chain off (identity), mirroring the CLI default.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct FilmState {
     pub stock: Option<StockProfile>,
     pub adjustments: Adjustments,
     pub lens: LensParams,
-}
-
-impl Default for FilmState {
-    fn default() -> Self {
-        Self {
-            stock: None,
-            adjustments: Adjustments::default(),
-            lens: LensParams::default(),
-        }
-    }
 }
 
 pub struct EditorState {
