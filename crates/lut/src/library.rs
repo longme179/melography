@@ -199,12 +199,25 @@ impl LutLibrary {
         let json = serde_json::to_string_pretty(index)
             .map_err(|e| LibraryError::IndexSchema(e.to_string()))?;
         let tmp = dir.join(".index.json.tmp");
-        std::fs::write(&tmp, json.as_bytes())
-            .map_err(|e| LibraryError::Io(format!("write {}: {e}", tmp.display())))?;
-        std::fs::rename(&tmp, self.index_path()).map_err(|e| {
-            LibraryError::Io(format!("rename → {}: {e}", self.index_path().display()))
-        })?;
+        atomic_write_durable(&tmp, json.as_bytes(), &self.index_path())?;
         Ok(())
+    }
+
+    /// Write-then-flush-then-rename: the flush (`sync_all`) guarantees the
+    /// data is on disk *before* the rename makes it visible, so an immediate
+    /// read-back (verify-at-load) never races an unflushed file — the Windows
+    /// CI flake this fixed hashed an empty blob (run 40077447188).
+    fn atomic_write_durable(tmp: &Path, bytes: &[u8], dest: &Path) -> Result<(), LibraryError> {
+        use std::io::Write;
+        let mut f = std::fs::File::create(tmp)
+            .map_err(|e| LibraryError::Io(format!("create {}: {e}", tmp.display())))?;
+        f.write_all(bytes)
+            .map_err(|e| LibraryError::Io(format!("write {}: {e}", tmp.display())))?;
+        f.sync_all()
+            .map_err(|e| LibraryError::Io(format!("sync {}: {e}", tmp.display())))?;
+        drop(f);
+        std::fs::rename(tmp, dest)
+            .map_err(|e| LibraryError::Io(format!("rename → {}: {e}", dest.display())))
     }
 
     /// Import (or re-import) a `.cube` file: validate strictly, copy under
@@ -237,10 +250,7 @@ impl LutLibrary {
         };
         if need_write {
             let tmp = dir.join(format!(".{hash}.tmp"));
-            std::fs::write(&tmp, &bytes)
-                .map_err(|e| LibraryError::Io(format!("write {}: {e}", tmp.display())))?;
-            std::fs::rename(&tmp, &blob)
-                .map_err(|e| LibraryError::Io(format!("rename → {}: {e}", blob.display())))?;
+            atomic_write_durable(&tmp, &bytes, &blob)?;
         }
 
         let record = LutRecord {
