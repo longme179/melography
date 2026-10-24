@@ -13,6 +13,8 @@
 
 pub mod auto_light;
 pub mod manager;
+#[cfg(feature = "onnx")]
+pub mod onnx;
 
 use serde::{Deserialize, Serialize};
 

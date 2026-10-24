@@ -1,0 +1,11 @@
+{
+  "id": "melography-dummy-param-predictor",
+  "version": "1.0.0",
+  "generated_by": "scripts/gen_dummy_predictor.py",
+  "weights_origin": "project-generated constants (no third-party weights)",
+  "license": "CC0-1.0 (project-generated data)",
+  "sha256": "47dbd10b2101e8b7fb4baba41417685c291cd24eb973758e8bff06aebbc1cd26",
+  "size_bytes": 921,
+  "opset": 17,
+  "note": "evaluation-harness plumbing proof + naive gray-world reference competitor for the issue #14 benchmark; NOT a shipping candidate"
+}

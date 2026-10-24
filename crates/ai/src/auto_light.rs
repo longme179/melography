@@ -289,15 +289,21 @@ pub fn suggest(img: &ImageF32) -> Suggestion {
         params.shadows = (100.0 * (((0.004 / bot.max(1e-6)).log2()) / 2.0).clamp(0.0, 1.0)).round();
     }
 
-    // Percentile shaping (AI_MODELS §2 contrast line).
-    if stats.p001 > BLACK_TRIGGER {
+    // Percentile shaping (AI_MODELS §2 contrast line). Sources are
+    // measured **post-EV**: the tone operator applies the curve after the
+    // EV scale, so the knots must live in the post-EV domain (EV is a pure
+    // luma scale, so `percentile(Y·2^ev) = 2^ev·percentile(Y)` exactly) —
+    // this also prevents EV and shaping from double-correcting.
+    let p001_after = stats.p001 * 2f32.powf(params.ev);
+    let p99_after = stats.p99 * 2f32.powf(params.ev);
+    if p001_after > BLACK_TRIGGER {
         notes.push(Note::BlackPointLift);
-        params.black_source = Some((stats.p001 * 1000.0).round() / 1000.0);
+        params.black_source = Some((p001_after * 1000.0).round() / 1000.0);
         params.black_target = Some(TARGET_BLACK);
     }
-    if stats.p99 < WHITE_TRIGGER {
+    if p99_after < WHITE_TRIGGER {
         notes.push(Note::WhitePointStretch);
-        params.white_source = Some((stats.p99 * 1000.0).round() / 1000.0);
+        params.white_source = Some((p99_after * 1000.0).round() / 1000.0);
         params.white_target = Some(TARGET_WHITE);
     }
 
@@ -331,6 +337,19 @@ pub fn downscale_area(img: &ImageF32, max_dim: u32) -> ImageF32 {
     let scale = f64::from(max_dim) / f64::from(long);
     let nw = ((f64::from(w) * scale).round() as u32).max(1);
     let nh = ((f64::from(h) * scale).round() as u32).max(1);
+    resize_exact(img, nw, nh)
+}
+
+/// Area-average resize to an **exact** target size (aspect not preserved).
+/// For global-statistics predictors (mean-pooled) the stretch leaves the
+/// statistics intact; spatial CNN preprocessing policies are declared per
+/// manifest (letterbox = documented follow-up).
+#[must_use]
+pub fn resize_exact(img: &ImageF32, nw: u32, nh: u32) -> ImageF32 {
+    let (w, h) = (img.width(), img.height());
+    if nw == 0 || nh == 0 || (nw == w && nh == h) {
+        return img.clone();
+    }
     let ch = img.channels().count();
     let mut out = ImageF32::alloc(nw, nh, img.channels(), 0.0);
     let (sx, sy) = (f64::from(w) / f64::from(nw), f64::from(h) / f64::from(nh));
