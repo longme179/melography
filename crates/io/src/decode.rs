@@ -10,6 +10,7 @@
 use crate::IoError;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 use melography_core::{Channels, ColorEncoding, ImageF32};
+use std::io::Cursor;
 use std::path::Path;
 
 /// Sanitized decode result.
@@ -34,7 +35,29 @@ pub fn decode_file(path: &Path) -> Result<DecodedImage, IoError> {
         .with_guessed_format()
         .map_err(|e| IoError::Unsupported(format!("format detection failed: {e}")))?;
     let format = reader.format();
-    let mut decoder = reader.into_decoder().map_err(IoError::Decode)?;
+    sanitize_decode(format, reader.into_decoder().map_err(IoError::Decode)?)
+}
+
+/// Decode from an in-memory buffer, applying the SAME sanitization (S0)
+/// as [`decode_file`] — bomb guard, ICC extraction, orientation bake-in,
+/// RGB-f32 normalization. This is the fuzz-target entry (ARCHITECTURE §9
+/// "decoders"; issue #25): arbitrary bytes in, no panics out — every
+/// rejection is a typed `IoError`.
+pub fn decode_bytes(bytes: &[u8]) -> Result<DecodedImage, IoError> {
+    let reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| IoError::Unsupported(format!("format detection failed: {e}")))?;
+    let format = reader.format();
+    sanitize_decode(format, reader.into_decoder().map_err(IoError::Decode)?)
+}
+
+/// Shared S0 pipeline over any decoder: dimension bomb guard → ICC →
+/// orientation → RGB f32 (straight alpha; see module docs for the M0
+/// alpha note) → encoding classification.
+fn sanitize_decode(
+    format: Option<ImageFormat>,
+    mut decoder: impl ImageDecoder,
+) -> Result<DecodedImage, IoError> {
     let (width, height) = decoder.dimensions();
     if u64::from(width) * u64::from(height) > crate::MAX_PIXELS {
         return Err(IoError::Bomb {
@@ -96,12 +119,54 @@ mod tests {
         let buf = tiny_png().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("tiny.png");
-        std::fs::write(&p, buf).unwrap();
+        std::fs::write(&p, buf.clone()).unwrap();
         let img = decode_file(&p).unwrap();
         assert_eq!((img.pixels.width(), img.pixels.height()), (4, 2));
         assert!(img.orientation_applied);
         assert_eq!(img.format, ImageFormat::Png);
         // first pixel is red
         assert!((img.pixels.pixel(0, 0)[0] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn decode_bytes_agrees_with_decode_file() {
+        // The fuzz entry must be the SAME pipeline as the file entry
+        // (ARCHITECTURE §9: fuzz the real path, not a parallel one).
+        let buf = tiny_png().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("tiny.png");
+        std::fs::write(&p, buf).unwrap();
+        let from_file = decode_file(&p).unwrap();
+        let from_bytes = decode_bytes(&tiny_png().unwrap()).unwrap();
+        assert_eq!(from_file.format, from_bytes.format);
+        assert_eq!(
+            (
+                from_file.pixels.width(),
+                from_file.pixels.height(),
+                from_file.pixels.data(),
+            ),
+            (
+                from_bytes.pixels.width(),
+                from_bytes.pixels.height(),
+                from_bytes.pixels.data(),
+            )
+        );
+    }
+
+    #[test]
+    fn decode_bytes_rejects_garbage_typed() {
+        // No panic, no hang — a typed error for every garbage class.
+        for garbage in [
+            &b""[..],
+            b"not an image at all",
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A], // truncated PNG magic
+            &[0xFF, 0xD8, 0xFF, 0xE0],             // truncated JPEG SOI
+        ] {
+            let r = decode_bytes(garbage);
+            assert!(
+                r.is_err(),
+                "garbage must be rejected, got Ok for {garbage:?}"
+            );
+        }
     }
 }

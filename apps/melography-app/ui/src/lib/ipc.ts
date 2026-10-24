@@ -122,6 +122,30 @@ export async function originalFrame(maxDim: number): Promise<PreviewFrame> {
   return parseFrame(buf);
 }
 
+/** Cache stats (#25): hit-rates + budgets for the S2 status bar. */
+export interface CacheStats {
+  preview: {
+    hits: number;
+    misses: number;
+    hit_rate_pct: number;
+    budget_mb: number;
+    cached_mb: number;
+    cached: boolean;
+  };
+  luts: {
+    hits: number;
+    misses: number;
+    hit_rate_pct: number;
+    budget_mb: number;
+    resident_mb: number;
+    entries: number;
+  };
+}
+
+export async function cacheStats(): Promise<CacheStats> {
+  return invoke<CacheStats>("cache_stats");
+}
+
 export async function importLut(args: {
   path: string;
   declaredInput: string;

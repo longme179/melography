@@ -155,6 +155,15 @@ impl CubeLut {
         }
     }
 
+    /// Approximate resident size in bytes — the table (f32 triples)
+    /// plus a small fixed allowance for the metadata. Budget accounting
+    /// for the app's LRU LUT cache (#25); an estimate, not an exact
+    /// allocation report.
+    #[must_use]
+    pub fn approx_bytes(&self) -> u64 {
+        (self.table.len() * std::mem::size_of::<f32>()) as u64 + 256
+    }
+
     /// Lattice point accessor for 3D tables (red-fastest layout).
     ///
     /// # Panics

@@ -1,0 +1,11 @@
+{
+ "schema": "melography.recipe",
+ "version": 1,
+ "image": {
+  "original_name": "x.png",
+  "input_encoding": "untagged_srgb"
+ },
+ "pipeline": {
+  "stages": []
+ }
+}

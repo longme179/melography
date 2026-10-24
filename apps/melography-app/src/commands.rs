@@ -130,7 +130,7 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
     st.sidecar = Some(sidecar);
     st.sidecar_path = Some(sidecar_path);
     st.dirty = false;
-    st.preview_cache = None;
+    st.preview_cache.slot = None; // keep budget + counters (#25)
     st.reset_history(); // history belongs to this image's session (M4 #24)
 
     // S1 Home (issue #23): record the open + refresh the list thumbnail
@@ -177,7 +177,7 @@ pub fn close_image(state: St) {
     st.sidecar = None;
     st.sidecar_path = None;
     st.lut_stack.clear();
-    st.preview_cache = None;
+    st.preview_cache.slot = None; // keep budget + counters (#25)
     st.dirty = false;
     st.reset_history(); // no session → no history (M4 #24)
 }
@@ -383,6 +383,7 @@ pub fn get_state(state: St) -> Result<StateJson, AppError> {
 fn state_json(st: &crate::state::EditorState) -> StateJson {
     let last_clamped = st
         .preview_cache
+        .slot
         .as_ref()
         .map(|c| c.clamped_pixels)
         .unwrap_or(0);
@@ -886,7 +887,49 @@ pub fn set_settings(
     st.settings
         .save(&st.library_root().join("settings.json"))
         .map_err(|e| AppError::new("settings.save", e.to_string()))?;
+    // Cache budgets are live (#25): a changed cache_budget_mb applies to
+    // both caches immediately (evicting/dropping as needed — cache.rs).
+    let total = u64::from(st.settings.cache_budget_mb) * 1024 * 1024;
+    st.preview_cache.set_budget(total);
+    st.luts_loaded
+        .set_budget(crate::cache::lut_budget_from_total(total));
     Ok(st.settings.clone())
+}
+
+/// Cache stats for the S2 status bar + Settings diagnostics (#25):
+/// hit-rates, budgets, residency — every number measured, none faked.
+#[tauri::command]
+pub fn cache_stats(state: St) -> serde_json::Value {
+    let st = state.lock().unwrap();
+    let p = &st.preview_cache;
+    let l = &st.luts_loaded;
+    let rate = |hits: u64, misses: u64| -> f64 {
+        let total = hits + misses;
+        if total == 0 {
+            0.0
+        } else {
+            (hits as f64 / total as f64) * 100.0
+        }
+    };
+    let mib = |b: u64| b as f64 / (1024.0 * 1024.0);
+    serde_json::json!({
+        "preview": {
+            "hits": p.hits,
+            "misses": p.misses,
+            "hit_rate_pct": rate(p.hits, p.misses),
+            "budget_mb": mib(p.budget_bytes),
+            "cached_mb": mib(p.cached_bytes()),
+            "cached": p.slot.is_some(),
+        },
+        "luts": {
+            "hits": l.hits,
+            "misses": l.misses,
+            "hit_rate_pct": rate(l.hits, l.misses),
+            "budget_mb": mib(l.budget_bytes()),
+            "resident_mb": mib(l.resident_bytes()),
+            "entries": l.len(),
+        },
+    })
 }
 
 // ─── Recents (M4 #23, UX_SPEC §3 S1 Home) ───────────────────────────────────
@@ -1089,7 +1132,7 @@ pub fn apply_preset(state: St, id: String) -> Result<StateJson, AppError> {
     st.push_history(); // one preset = one undo step (M4 #24 semantics)
     st.apply_pipeline_stages(&p.stages);
     st.dirty = true;
-    st.preview_cache = None;
+    st.preview_cache.slot = None; // keep budget + counters (#25)
     Ok(state_json(&st))
 }
 
@@ -1132,7 +1175,9 @@ pub fn stock_thumbs(state: St, max_dim: u32) -> Result<Vec<StockThumbJson>, AppE
         };
         let frame = render::compose_preview(
             &session.ap1,
-            &mut None, // never touch the live preview cache
+            // Never touch the live preview cache — a zero-budget slot
+            // renders without retaining anything (#25).
+            &mut crate::cache::PreviewCacheState::new(0),
             &[],
             Some(&leg),
             st.tone.params.as_ref(),

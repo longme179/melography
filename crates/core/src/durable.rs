@@ -30,7 +30,9 @@
 //! spawns this test binary as a child that loops writes + read-back
 //! verification, SIGKILLs it at randomized points, and re-opens the
 //! files — the PLAN M4 "kill during save" exit criterion, run on every
-//! OS in CI.
+//! OS in CI. The streaming variant ([`atomic_write_durable_with`]) backs
+//! the export encoders and carries its own battery
+//! (`melography-io`'s `tests/export_kill.rs` — "kill during export").
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -62,10 +64,25 @@ fn tmp_sibling(dest: &Path) -> PathBuf {
 
 /// Atomically replace `dest` with `bytes`, durably (see module docs).
 pub fn atomic_write_durable(dest: &Path, bytes: &[u8]) -> io::Result<()> {
+    atomic_write_durable_with(dest, |f| f.write_all(bytes))
+}
+
+/// Streaming variant of [`atomic_write_durable`] for encoders that write
+/// through a `BufWriter` (PNG/TIFF/JPEG export) instead of materializing
+/// the whole file in memory. Identical crash contract: `write` fills a
+/// uniquely-named temp sibling, the file is fsynced and closed, then
+/// renamed over `dest` — a kill at ANY point leaves `dest` either the
+/// complete previous content or absent, never torn. `write` must have
+/// flushed everything it wants persisted before returning (wrap your
+/// own `BufWriter` and flush it; the fsync below then covers it).
+pub fn atomic_write_durable_with<F>(dest: &Path, write: F) -> io::Result<()>
+where
+    F: FnOnce(&mut std::fs::File) -> io::Result<()>,
+{
     let tmp = tmp_sibling(dest);
     {
         let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
+        write(&mut f)?;
         f.sync_all()?;
     } // handle dropped here — before the rename (Windows sharing violation)
     match std::fs::rename(&tmp, dest) {

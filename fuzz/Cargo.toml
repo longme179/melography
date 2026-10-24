@@ -1,0 +1,66 @@
+# MELOGRAPHY fuzz battery (issue #25, ARCHITECTURE §9 "cargo-fuzz at M1+").
+#
+# Standalone crate OUTSIDE the workspace (like spikes/s4-updater): cargo-fuzz
+# needs a nightly toolchain for the sanitizer runtimes, which must not
+# contaminate the pinned 1.99.1 workspace build. Targets:
+#   * decode_image   — melography-io S0 sanitization over JPEG/PNG/TIFF/WebP bytes
+#   * cube_parser    — the strict .cube LUT parser
+#   * sidecar_json   — sidecar v1 deserializer + migration chain + re-serialize
+#   * manifest_json  — AI model manifest parse + the vetting gate
+#
+# Seeds live in fuzz/corpus/<target>/ (committed; provenance-checked by
+# scripts/provenance_check.py — binary seeds carry sibling provenance
+# records). CI runs short bursts per target (see ci.yml `fuzz-burst`).
+
+[package]
+name = "melography-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+melography-io = { path = "../crates/io" }
+melography-lut = { path = "../crates/lut" }
+melography-presets = { path = "../crates/presets" }
+melography-ai = { path = "../crates/ai" }
+# decode_image harness peeks header dimensions directly (same version the
+# io crate uses — the workspace pins it via its own features list).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "webp"] }
+serde_json = "1"
+
+# Pin the workspace crates' shared deps to the same versions the root
+# Cargo.lock uses where they overlap (the fuzz crate keeps its own lock;
+# drift shows up as a different code path under test — reviewed, not
+# accidental).
+
+[[bin]]
+name = "decode_image"
+path = "fuzz_targets/decode_image.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cube_parser"
+path = "fuzz_targets/cube_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sidecar_json"
+path = "fuzz_targets/sidecar_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest_json"
+path = "fuzz_targets/manifest_json.rs"
+test = false
+doc = false
+bench = false

@@ -221,10 +221,14 @@ pub fn ap1_to_rgba8_display(img: &ImageF32) -> Vec<u8> {
 }
 
 /// Compose one preview frame from the (possibly cached) full-res render.
+/// Caching (#25): `cache` is the budgeted slot — hits/misses are counted,
+/// and a rendered image larger than `cache.budget_bytes` is NOT stored
+/// (honest degradation: re-render per interaction, surfaced via
+/// `cache_stats` — never a silent memory overrun).
 #[allow(clippy::too_many_arguments)]
 pub fn compose_preview(
     base: &ImageF32,
-    cache: &mut Option<RenderCache>,
+    cache: &mut crate::cache::PreviewCacheState,
     stack: &[ResolvedLut],
     film: Option<&FilmLeg>,
     tone: Option<&melography_color::tone::ToneParams>,
@@ -241,15 +245,24 @@ pub fn compose_preview(
     if let Some(t) = tone {
         key ^= tone_key(t).wrapping_mul(0x5851_F42D_4C95_7F2D);
     }
-    let (full, clamped) = match cache {
-        Some(c) if c.key == key => (c.image.clone(), c.clamped_pixels),
-        _ => {
+    let (full, clamped) = match cache.slot.as_ref().filter(|c| c.key == key) {
+        Some(c) => {
+            cache.hits += 1;
+            (c.image.clone(), c.clamped_pixels)
+        }
+        None => {
+            cache.misses += 1;
             let (img, clamped) = render_pipeline(base, stack, film, tone, max_dim)?;
-            *cache = Some(RenderCache {
-                key,
-                image: img.clone(),
-                clamped_pixels: clamped,
-            });
+            if (img.byte_len() as u64) <= cache.budget_bytes {
+                cache.slot = Some(RenderCache {
+                    key,
+                    image: img.clone(),
+                    clamped_pixels: clamped,
+                });
+            } else {
+                // Budget enforcement (#25): too large to retain.
+                cache.slot = None;
+            }
             (img, clamped)
         }
     };
@@ -456,11 +469,13 @@ mod tests {
             lut: lut.clone(),
         }];
 
-        let mut cache = None;
+        let mut cache = crate::cache::PreviewCacheState::new(u64::MAX);
         let f1 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
         let f2 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
         assert_eq!(f1.rgba, f2.rgba, "cached path returns identical pixels");
-        assert!(cache.as_ref().unwrap().key == stack_key(&base, &stack));
+        assert!(cache.slot.as_ref().unwrap().key == stack_key(&base, &stack));
+        assert_eq!(cache.hits, 1, "second compose hit");
+        assert_eq!(cache.misses, 1, "first compose missed");
 
         // Intensity change → new key → different pixels.
         let stack2 = vec![ResolvedLut {
@@ -478,13 +493,30 @@ mod tests {
     }
 
     #[test]
+    fn preview_cache_budget_is_enforced() {
+        // #25: an image bigger than the budget renders fine but is never
+        // retained — the honest degradation contract.
+        let base = gradient(32, 32);
+        let stack: Vec<ResolvedLut> = Vec::new();
+        let mut cache = crate::cache::PreviewCacheState::new(64); // 64 bytes!
+        let f1 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
+        assert!(cache.slot.is_none(), "oversize render not retained");
+        assert_eq!(cache.misses, 1);
+        // Second compose: still a miss (nothing cached), same pixels.
+        let f2 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
+        assert_eq!(f1.rgba, f2.rgba);
+        assert_eq!(cache.misses, 2, "no hit possible when uncached");
+        assert_eq!(cache.hits, 0);
+    }
+
+    #[test]
     fn tone_leg_changes_preview_and_cache_key() {
         use melography_color::tone::ToneParams;
         let base = gradient(32, 32);
         let stack: Vec<ResolvedLut> = Vec::new();
-        let mut cache = None;
+        let mut cache = crate::cache::PreviewCacheState::new(u64::MAX);
         let f1 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
-        let key_before = cache.as_ref().unwrap().key;
+        let key_before = cache.slot.as_ref().unwrap().key;
 
         // Identity tone = same key, same pixels.
         let f_id = compose_preview(
@@ -496,7 +528,7 @@ mod tests {
             16,
         )
         .unwrap();
-        assert_eq!(key_before, cache.as_ref().unwrap().key);
+        assert_eq!(key_before, cache.slot.as_ref().unwrap().key);
         assert_eq!(f1.rgba, f_id.rgba);
 
         // A real correction → new key → visibly brighter pixels (mean).
@@ -505,7 +537,7 @@ mod tests {
             ..ToneParams::default()
         };
         let f_ev = compose_preview(&base, &mut cache, &stack, None, Some(&tone), 16).unwrap();
-        assert_ne!(key_before, cache.as_ref().unwrap().key);
+        assert_ne!(key_before, cache.slot.as_ref().unwrap().key);
         let mean = |f: &PreviewFrame| {
             f.rgba.iter().map(|&c| u32::from(c)).sum::<u32>() / f.rgba.len() as u32
         };

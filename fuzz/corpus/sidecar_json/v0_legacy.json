@@ -1,0 +1,15 @@
+{
+ "schema": "melography.recipe",
+ "version": 0,
+ "image": {
+  "original_name": "old.jpg"
+ },
+ "pipeline": {
+  "stages": [
+   {
+    "stage": "lut",
+    "instance": "abababababababababababababababababababababababababababababababab"
+   }
+  ]
+ }
+}

@@ -1,0 +1,35 @@
+{
+ "schema": "melography.recipe",
+ "version": 1,
+ "created_utc": "2026-10-24T00:00:00Z",
+ "modified_utc": "2026-10-24T00:00:00Z",
+ "image": {
+  "original_name": "photo.jpg",
+  "input_encoding": "untagged_srgb",
+  "fingerprint": {
+   "size_bytes": 12345,
+   "sha256_file": "abababababababababababababababababababababababababababababababab",
+   "luma_hash_8x8": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+  }
+ },
+ "pipeline": {
+  "stages": [
+   {
+    "stage": "film_identity",
+    "enabled": true
+   },
+   {
+    "stage": "lut",
+    "instance": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+    "insertion": "Finishing",
+    "intensity": 0.75,
+    "declared_input": "rec709_display_linear",
+    "declared_output": "rec709_display_linear",
+    "enabled": true
+   }
+  ]
+ },
+ "unknown_future_field": {
+  "kept": "inert"
+ }
+}
