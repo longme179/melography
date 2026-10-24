@@ -885,7 +885,10 @@ dependencies = [
 name = "melography-gpu"
 version = "0.0.1"
 dependencies = [
+ "bytemuck",
  "melography-core",
+ "melography-gpu",
+ "melography-lut",
  "pollster",
  "serde",
  "serde_json",

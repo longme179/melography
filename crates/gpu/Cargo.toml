@@ -20,12 +20,18 @@ wgpu = { version = "30", optional = true, default-features = false, features = [
     "dx12",
 ] }
 pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1", optional = true, features = ["derive"] }
 
 [features]
 default = []
 # Compile the real wgpu backend (used by spikes/s1-transport and, later, the
 # parity harness). Off by default so the processing workspace stays light.
-wgpu = ["dep:wgpu", "dep:pollster"]
+wgpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
+melography-lut = { workspace = true }
+# Self dev-dependency: turns the `wgpu` feature on for this crate's OWN
+# tests without forcing it on downstream users (M0 pattern keeps default
+# builds light; CI builds wgpu anyway via spikes/s1-transport).
+melography-gpu = { path = ".", features = ["wgpu"] }
