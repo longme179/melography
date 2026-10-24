@@ -10,9 +10,20 @@ authors.workspace = true
 
 [dependencies]
 melography-core = { workspace = true }
+melography-color = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 semver = { workspace = true }
+sha2 = { workspace = true }
+# ONNX parameter-predictor evaluation harness (issue #14) — same pin as the
+# S3 spike (ADR-0004 §2: ort 2.0.0-rc.15). Feature-gated so the default
+# workspace build stays light; CI runs the onnx tests explicitly.
+ort = { version = "=2.0.0-rc.15", features = ["download-binaries"], optional = true }
+
+[features]
+onnx = ["dep:ort"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tempfile = "3"
