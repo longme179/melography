@@ -73,6 +73,8 @@ pub fn run() {
             commands::install_model_from_file,
             commands::delete_model,
             commands::get_state,
+            commands::undo,
+            commands::redo,
             commands::save_recipe,
             commands::export_image,
         ])

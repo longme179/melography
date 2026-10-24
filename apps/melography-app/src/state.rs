@@ -49,6 +49,23 @@ pub struct ToneState {
     pub source: Option<SuggestionSource>,
 }
 
+/// A recipe-level snapshot for undo/redo (UX_SPEC §4 History: "infinite
+/// within session, bounded persistence" — here: bounded in-memory stack,
+/// UX polish M4 issue #24). Everything `save_recipe` rebuilds the sidecar
+/// from is captured; the library and the loaded-LUT cache are NOT recipe
+/// state (library mutations are their own explicit actions).
+#[derive(Clone)]
+pub struct RecipeSnapshot {
+    pub film: FilmState,
+    pub tone: ToneState,
+    pub lut_stack: Vec<LutApply>,
+}
+
+/// Undo depth. "Infinite within session" is approximated by a bound far
+/// beyond realistic interactive editing; the oldest entry is dropped
+/// (bounded memory — the same honesty as the LRU caches).
+pub const UNDO_LIMIT: usize = 100;
+
 pub struct EditorState {
     pub session: Option<OpenSession>,
     pub library: LutLibrary,
@@ -68,6 +85,10 @@ pub struct EditorState {
     /// True when the stack changed since the last sidecar save.
     pub dirty: bool,
     pub preview_cache: Option<RenderCache>,
+    /// Undo stack (pre-mutation snapshots, bounded — see UNDO_LIMIT).
+    pub history: Vec<RecipeSnapshot>,
+    /// Redo stack (cleared by any new mutation — standard undo semantics).
+    pub redo: Vec<RecipeSnapshot>,
 }
 
 impl EditorState {
@@ -85,7 +106,44 @@ impl EditorState {
             sidecar_path: None,
             dirty: false,
             preview_cache: None,
+            history: Vec::new(),
+            redo: Vec::new(),
         }
+    }
+
+    /// Capture the current recipe state.
+    pub fn snapshot(&self) -> RecipeSnapshot {
+        RecipeSnapshot {
+            film: self.film.clone(),
+            tone: self.tone.clone(),
+            lut_stack: self.lut_stack.clone(),
+        }
+    }
+
+    /// Record the pre-mutation state. Call BEFORE applying a recipe
+    /// change; any new mutation invalidates the redo branch.
+    pub fn push_history(&mut self) {
+        self.redo.clear();
+        self.history.push(self.snapshot());
+        if self.history.len() > UNDO_LIMIT {
+            self.history.remove(0);
+        }
+    }
+
+    /// Restore a snapshot (undo/redo path). Marks dirty so the next
+    /// render recomputes; the preview cache key changes with the recipe.
+    pub fn restore(&mut self, s: RecipeSnapshot) {
+        self.film = s.film;
+        self.tone = s.tone;
+        self.lut_stack = s.lut_stack;
+        self.dirty = true;
+    }
+
+    /// Session-scope reset (open/close image): history belongs to the
+    /// editing session of one image.
+    pub fn reset_history(&mut self) {
+        self.history.clear();
+        self.redo.clear();
     }
 
     /// Resolve the stack against the library (hash-verified loads; missing

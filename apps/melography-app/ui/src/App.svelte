@@ -8,6 +8,8 @@
     openImage,
     getState,
     saveRecipe,
+    undo as undoCmd,
+    redo as redoCmd,
     listStocks,
     getFilm,
   } from "./lib/ipc";
@@ -33,7 +35,13 @@
 
   async function refreshState() {
     try {
-      state.set(await getState());
+      const s = await getState();
+      state.set(s);
+      // Parameter settled with unsaved changes → schedule the debounced
+      // autosave (M4 #24). Every mutation path ends in refreshState, so
+      // this is the single settle point.
+      if (s.dirty && s.imageOpen) scheduleAutosave();
+      else if (!s.dirty) cancelAutosave();
     } catch (e) {
       lastError.set(e as never);
     }
@@ -54,7 +62,41 @@
     }
   }
 
+  // ── Autosave (M4 #24, UX_SPEC §4: "autosave indicator (dot, never
+  // modal)") ────────────────────────────────────────────────────────
+  // Recipe mutations settle → debounced save_recipe; the toolbar's dirty
+  // badge IS the indicator (appears while dirty, clears when saved). No
+  // toasts, no modals. Explicit Ctrl+S cancels the pending timer (already
+  // saved). Crash-safety: the save path is the shared durable primitive
+  // (kill-battery-tested), so a kill mid-autosave leaves the previous
+  // complete sidecar.
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  const AUTOSAVE_DELAY_MS = 900;
+
+  function scheduleAutosave() {
+    if (autosaveTimer !== null) clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(async () => {
+      autosaveTimer = null;
+      try {
+        await saveRecipe();
+        await refreshState(); // dirty badge clears — that's the whole UI
+      } catch (e) {
+        // Never a modal: the dirty badge stays; the error banner shows
+        // the code + guidance (UX_SPEC §9).
+        lastError.set(e as never);
+      }
+    }, AUTOSAVE_DELAY_MS);
+  }
+
+  function cancelAutosave() {
+    if (autosaveTimer !== null) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+  }
+
   async function doSave() {
+    cancelAutosave(); // explicit save supersedes the pending timer
     try {
       await saveRecipe();
       toast.set(t("toolbar.saved"));
@@ -79,11 +121,46 @@
       if (e.key === "s") {
         e.preventDefault();
         doSave();
+      } else if (e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        doUndo();
+      } else if ((e.key === "z" || e.key === "Z") && e.shiftKey) {
+        e.preventDefault();
+        doRedo();
+      } else if (e.key === "y" || e.key === "Y") {
+        e.preventDefault();
+        doRedo();
       }
       return;
     }
     if (e.key === "o") doOpen();
     else if (e.key === "e") exportOpen = $state.imageOpen;
+  }
+
+  /** Undo/redo (M4 #24, UX_SPEC §8 keyboard map): apply, refresh every
+   * panel bound to recipe state, re-render the viewport. */
+  async function doUndo() {
+    try {
+      state.set(await undoCmd());
+      viewport?.refresh();
+      // Panels mirror recipe state (film/tone/LUT) — re-fetch so the UI
+      // never shows a stale recipe after a history jump.
+      getFilm().then((f) => film.set(f)).catch(console.error);
+      lutPanel?.reload();
+    } catch (e) {
+      lastError.set(e as never);
+    }
+  }
+
+  async function doRedo() {
+    try {
+      state.set(await redoCmd());
+      viewport?.refresh();
+      getFilm().then((f) => film.set(f)).catch(console.error);
+      lutPanel?.reload();
+    } catch (e) {
+      lastError.set(e as never);
+    }
   }
 
   onMount(() => {
@@ -94,6 +171,7 @@
     const h = window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
+      cancelAutosave(); // never save after unmount
     };
   });
 </script>
@@ -103,6 +181,8 @@
     onOpen={doOpen}
     onExport={() => (exportOpen = true)}
     onSave={doSave}
+    onUndo={doUndo}
+    onRedo={doRedo}
   />
   <ErrorBanner />
   <main>

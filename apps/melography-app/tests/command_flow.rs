@@ -118,3 +118,89 @@ fn session_library_preview_flow() {
 
     let _ = Arc::new(0); // keep Arc import meaningful for future shared luts
 }
+
+/// M4 issue #24 — undo/redo semantics at the state layer (the exact
+/// machinery the `undo`/`redo` commands drive): push-before-mutate,
+/// restore-on-undo, redo cleared by new mutations, history reset per
+/// session, bound honored.
+#[test]
+fn undo_redo_roundtrip_and_semantics() {
+    let td = tempfile::tempdir().unwrap();
+    let mut st = EditorState::new(td.path().to_path_buf());
+
+    // Fresh session: nothing to undo/redo.
+    assert!(st.history.is_empty() && st.redo.is_empty());
+
+    // Mutation 1: LUT stack.
+    st.push_history();
+    st.lut_stack = vec![LutApply {
+        lut_hash: "aaaa".into(),
+        insertion: InsertionPoint::PreFilm,
+        intensity: 0.5,
+        declared_input: LutEncoding::SrgbDisplay,
+        declared_output: LutEncoding::SrgbDisplay,
+        enabled: true,
+    }];
+    st.dirty = true;
+
+    // Mutation 2: tone.
+    st.push_history();
+    st.tone.params = Some(melography_color::tone::ToneParams::default());
+    st.dirty = true;
+
+    // Undo once → back to "LUT only".
+    let snap = st.history.pop().unwrap();
+    st.redo.push(st.snapshot());
+    st.restore(snap);
+    assert!(st.tone.params.is_none(), "tone undone");
+    assert_eq!(st.lut_stack.len(), 1, "LUT mutation still present");
+
+    // Redo → tone back.
+    let snap = st.redo.pop().unwrap();
+    st.history.push(st.snapshot());
+    st.restore(snap);
+    assert!(st.tone.params.is_some(), "tone restored");
+    assert_eq!(st.lut_stack.len(), 1);
+
+    // Undo again (to LUT-only), then a NEW mutation must clear redo.
+    let snap = st.history.pop().unwrap();
+    st.redo.push(st.snapshot());
+    st.restore(snap);
+    assert!(st.tone.params.is_none());
+    st.push_history(); // new mutation invalidates the redo branch
+    assert!(st.redo.is_empty(), "redo cleared by new mutation");
+
+    // Restore marks dirty (next render recomputes).
+    st.dirty = false;
+    let snap = st.history.pop().unwrap();
+    st.restore(snap);
+    assert!(st.dirty, "restore marks the recipe dirty");
+
+    // Session reset clears both stacks.
+    st.reset_history();
+    assert!(st.history.is_empty() && st.redo.is_empty());
+}
+
+/// M4 issue #24 — the undo bound: oldest entries drop, memory stays
+/// bounded (UX_SPEC §4 "infinite within session, bounded persistence").
+#[test]
+fn undo_history_is_bounded() {
+    let td = tempfile::tempdir().unwrap();
+    let mut st = EditorState::new(td.path().to_path_buf());
+    let limit = melography_app_lib::state::UNDO_LIMIT;
+    for i in 0..(limit + 25) {
+        st.push_history();
+        st.lut_stack = vec![LutApply {
+            lut_hash: format!("hash-{i}"),
+            insertion: InsertionPoint::Finishing,
+            intensity: 0.1,
+            declared_input: LutEncoding::SrgbDisplay,
+            declared_output: LutEncoding::SrgbDisplay,
+            enabled: true,
+        }];
+    }
+    assert_eq!(st.history.len(), limit, "bound enforced");
+    // The oldest surviving snapshot is the (25+1)-th mutation's pre-state.
+    assert_eq!(st.history[0].lut_stack.len(), 1);
+    assert_eq!(st.history[0].lut_stack[0].lut_hash, "hash-24");
+}

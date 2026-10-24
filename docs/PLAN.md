@@ -53,10 +53,11 @@ Tasks: baseline auto-lighting (AI_MODELS §2) · model manager + manifest gate +
 **Exit:** suggestions are editable parameters (never baked pixels); offline mode fully functional with no models installed; every shipped model has a complete manifest with verified weights license; budgets met on reference hardware.
 **Outcome:** all exit criteria met — Tone stage (editable params + provenance), baseline-only v1 (no model passed the gate — the honest ADR-0004 §7 outcome), manager fully tested offline, budgets 49–61× under (60.6 ms vs 3 000 ms @ 12 MP). Masks deferred with the gate-blocked candidates; the benchmark (baseline 0.205 vs naive-ONNX 1.019) is CI-enforced as the bar.
 
-### M4 — Production UX polish & hardening (effort L, uncertainty medium)
+### M4 — Production UX polish & hardening (effort L, uncertainty medium) — **IN PROGRESS on `agent/m4-ux-hardening` (session 06; issues #23 #24 #25 + #15)**
 **Scope:** everything that makes it a product for P1–P5.
 Tasks: full panel set per UX_SPEC · batch export queue · undo/redo + autosave + crash-safe sidecars · preset manager · EN/VI complete catalogs + pseudo-locale CI · accessibility pass (keyboard-only, SR announcements, contrast) · high-DPI · performance (cache budgets, memory ≤ 2 GiB @ 50MP) · security hardening (fuzz decoders/LUT/sidecar; secret scan; provenance tooling) · error-state inventory complete.
 **Exit:** persona walkthroughs pass; crash-safety tests (kill during save/export/update) green; a11y audit checklist green; EN/VI screenshots complete.
+**Progress (session 06):** session-model slice (#24 core) done — shared durable-write primitive `core::durable` (kills the 3 duplicated implementations; fixes the presets Windows no-fsync honesty gap) + real SIGKILL crash battery in CI (PLAN exit criterion "kill during save" — green); undo/redo (Ctrl+Z/Y, toolbar, panel refresh, bounded 100-step history, session-scoped) + debounced autosave (dirty-badge indicator, never modal) + open-time sidecar litter recovery. Remaining: #23 screens, #15 i18n/a11y, #25 hardening.
 
 ### M5 — Controlled beta v0.1 (effort M, uncertainty medium — owner-gated)
 Tasks: packaging matrix (ADR-0005) · updater end-to-end on dummy→beta channel with owner-held keys (owner generates; CI uses Secrets) · release workflow + protected Environment `release` · recovery docs · beta opt-in flow (Settings) · CHANGELOG + install/recovery guides.

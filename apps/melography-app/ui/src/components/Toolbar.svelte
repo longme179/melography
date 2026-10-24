@@ -6,6 +6,8 @@
   export let onOpen: () => void = () => {};
   export let onExport: () => void = () => {};
   export let onSave: () => void = () => {};
+  export let onUndo: () => void = () => {};
+  export let onRedo: () => void = () => {};
 
   function fit() {
     zoom.set(1);
@@ -29,6 +31,24 @@
     <button on:click={onOpen}>{t("toolbar.open")}</button>
     <button on:click={() => compareOn.update((v) => !v)} disabled={!$state.imageOpen}>
       {t("toolbar.compare")}
+    </button>
+  </div>
+  <div class="group">
+    <button
+      on:click={onUndo}
+      disabled={!$state.canUndo}
+      aria-label={t("toolbar.undo")}
+      title={t("toolbar.undo") + " (Ctrl+Z)"}
+    >
+      ↩
+    </button>
+    <button
+      on:click={onRedo}
+      disabled={!$state.canRedo}
+      aria-label={t("toolbar.redo")}
+      title={t("toolbar.redo") + " (Ctrl+Shift+Z)"}
+    >
+      ↪
     </button>
   </div>
   <div class="group">

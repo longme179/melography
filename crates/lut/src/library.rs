@@ -156,21 +156,15 @@ pub struct LutLibrary {
     root: PathBuf,
 }
 
-/// Write-then-flush-then-rename: the flush (`sync_all`) guarantees the
-/// data is on disk *before* the rename makes it visible, so an immediate
-/// read-back (verify-at-load) never races an unflushed file — the Windows
-/// CI flake this fixed hashed an empty blob (run 40077447188).
-fn atomic_write_durable(tmp: &Path, bytes: &[u8], dest: &Path) -> Result<(), LibraryError> {
-    use std::io::Write;
-    let mut f = std::fs::File::create(tmp)
-        .map_err(|e| LibraryError::Io(format!("create {}: {e}", tmp.display())))?;
-    f.write_all(bytes)
-        .map_err(|e| LibraryError::Io(format!("write {}: {e}", tmp.display())))?;
-    f.sync_all()
-        .map_err(|e| LibraryError::Io(format!("sync {}: {e}", tmp.display())))?;
-    drop(f);
-    std::fs::rename(tmp, dest)
-        .map_err(|e| LibraryError::Io(format!("rename → {}: {e}", dest.display())))
+/// Durable atomic write, delegated to the shared primitive
+/// (`melography_core::durable`) — the same battle-tested path as the model
+/// manager and recipe sidecars. Historical note: the original local
+/// implementation (write→flush→rename, run 40077447188) fixed the Windows
+/// empty-blob read-back race; the shared primitive preserves that ordering
+/// and adds pid+nanos-unique temp names plus POSIX dir-fsync.
+fn atomic_write_durable(dest: &Path, bytes: &[u8]) -> Result<(), LibraryError> {
+    melography_core::durable::atomic_write_durable(dest, bytes)
+        .map_err(|e| LibraryError::Io(format!("atomic write {}: {e}", dest.display())))
 }
 
 impl LutLibrary {
@@ -215,8 +209,7 @@ impl LutLibrary {
             .map_err(|e| LibraryError::Io(format!("mkdir {}: {e}", dir.display())))?;
         let json = serde_json::to_string_pretty(index)
             .map_err(|e| LibraryError::IndexSchema(e.to_string()))?;
-        let tmp = dir.join(".index.json.tmp");
-        atomic_write_durable(&tmp, json.as_bytes(), &self.index_path())?;
+        atomic_write_durable(&self.index_path(), json.as_bytes())?;
         Ok(())
     }
 
@@ -249,8 +242,7 @@ impl LutLibrary {
             Err(_) => true,
         };
         if need_write {
-            let tmp = dir.join(format!(".{hash}.tmp"));
-            atomic_write_durable(&tmp, &bytes, &blob)?;
+            atomic_write_durable(&blob, &bytes)?;
         }
 
         let record = LutRecord {

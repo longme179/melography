@@ -62,6 +62,9 @@ export interface AppState {
   sidecarPath: string | null;
   lastClampedPixels: number;
   libraryCount: number;
+  /** Undo availability (M4 #24 — drives toolbar + keyboard). */
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 export interface AppErrorPayload {
@@ -137,6 +140,17 @@ export async function setLutStack(stack: LutStackEntry[]): Promise<void> {
 
 export async function getState(): Promise<AppState> {
   return invoke<AppState>("get_state");
+}
+
+/** Undo the last recipe mutation (M4 #24). The backend returns the
+ * refreshed state — same shape as getState. */
+export async function undo(): Promise<AppState> {
+  return invoke<AppState>("undo");
+}
+
+/** Redo the last undone mutation (M4 #24). */
+export async function redo(): Promise<AppState> {
+  return invoke<AppState>("redo");
 }
 
 export async function saveRecipe(): Promise<void> {
