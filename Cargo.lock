@@ -1086,10 +1086,14 @@ dependencies = [
 name = "melography-ai"
 version = "0.0.1"
 dependencies = [
+ "melography-color",
  "melography-core",
+ "ort",
  "semver",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror",
 ]
 
@@ -1194,6 +1198,7 @@ name = "melography-presets"
 version = "0.0.1"
 dependencies = [
  "jsonschema",
+ "melography-color",
  "melography-core",
  "melography-film",
  "melography-lut",
