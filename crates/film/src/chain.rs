@@ -75,6 +75,18 @@ impl FilmChainParams {
         Ok(self)
     }
 
+    /// Full recipe-level parameterization (adjustments + lens).
+    pub fn with_adjustments(
+        mut self,
+        adjustments: Adjustments,
+        lens: LensParams,
+    ) -> Result<Self, ChainError> {
+        self.adjustments = adjustments;
+        self.lens = lens;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<(), ChainError> {
         self.profile
             .validate()

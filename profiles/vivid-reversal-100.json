@@ -1,0 +1,246 @@
+{
+  "schema": "melography.stock-profile",
+  "id": "vivid-reversal-100",
+  "display_name": "Vivid Reversal 100",
+  "profile_version": 1,
+  "provenance": "artist-authored",
+  "confidence": "medium",
+  "input_assumption": "neutral-camera-jpeg",
+  "polarity": "reversal",
+  "layers": "color",
+  "crop_rule": "fit-width",
+  "m_exc": [
+    1.02,
+    0.03,
+    0.02,
+    0.03,
+    1.0,
+    0.03,
+    0.02,
+    0.03,
+    0.98
+  ],
+  "crosstalk": [
+    0.0,
+    0.03,
+    0.01,
+    0.02,
+    0.0,
+    0.03,
+    0.01,
+    0.02,
+    0.0
+  ],
+  "curves": [
+    {
+      "log_e": [
+        -4.0,
+        -3.0,
+        -2.0,
+        -1.0,
+        0.0
+      ],
+      "density": [
+        2.9,
+        2.85,
+        2.2,
+        0.65,
+        0.1
+      ]
+    },
+    {
+      "log_e": [
+        -4.0,
+        -3.0,
+        -2.0,
+        -1.0,
+        0.0
+      ],
+      "density": [
+        2.95,
+        2.9,
+        2.3,
+        0.7,
+        0.12
+      ]
+    },
+    {
+      "log_e": [
+        -4.0,
+        -3.0,
+        -2.0,
+        -1.0,
+        0.0
+      ],
+      "density": [
+        3.0,
+        2.95,
+        2.4,
+        0.8,
+        0.14
+      ]
+    }
+  ],
+  "d_min": [
+    0.1,
+    0.12,
+    0.14
+  ],
+  "mid_log_e": -1.8,
+  "x_floor": 1e-05,
+  "halation": [
+    {
+      "alpha": 0.006,
+      "kernel": [
+        {
+          "sigma_mm": 0.008,
+          "weight": 1.0
+        }
+      ]
+    },
+    {
+      "alpha": 0.002,
+      "kernel": [
+        {
+          "sigma_mm": 0.006,
+          "weight": 1.0
+        }
+      ]
+    },
+    {
+      "alpha": 0.0,
+      "kernel": [
+        {
+          "sigma_mm": 0.005,
+          "weight": 1.0
+        }
+      ]
+    }
+  ],
+  "halation_epsilon": 0.05,
+  "grain": {
+    "cells_per_mm": 70,
+    "lambda": 0.7,
+    "mu_r_mm": 0.0032,
+    "sigma_r_mm": 0.0012,
+    "sigma_curve": {
+      "density": [
+        0.0,
+        0.6,
+        1.4,
+        2.8
+      ],
+      "sigma": [
+        0.004,
+        0.01,
+        0.014,
+        0.007
+      ]
+    },
+    "psd_slope": -0.95,
+    "rho": [
+      1.0,
+      0.2,
+      0.12,
+      0.2,
+      1.0,
+      0.18,
+      0.12,
+      0.18,
+      1.0
+    ],
+    "seed": 103
+  },
+  "print": {
+    "default_path": "paper",
+    "d_mask": [
+      0.1,
+      0.12,
+      0.14
+    ],
+    "paper_curves": [
+      {
+        "log_e": [
+          -3.2,
+          -2.4,
+          -1.6,
+          -0.9,
+          -0.4
+        ],
+        "density": [
+          0.02,
+          0.04,
+          0.3,
+          1.3,
+          2.0
+        ]
+      },
+      {
+        "log_e": [
+          -3.2,
+          -2.4,
+          -1.6,
+          -0.9,
+          -0.4
+        ],
+        "density": [
+          0.02,
+          0.04,
+          0.3,
+          1.3,
+          2.0
+        ]
+      },
+      {
+        "log_e": [
+          -3.2,
+          -2.4,
+          -1.6,
+          -0.9,
+          -0.4
+        ],
+        "density": [
+          0.02,
+          0.04,
+          0.3,
+          1.3,
+          2.0
+        ]
+      }
+    ],
+    "paper_white_density": 0.02,
+    "scanner_black": -2.8,
+    "scanner_white": -0.2,
+    "scanner_gamma": 1.0,
+    "scanner_matrix": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scanner_glare": 0.001,
+    "output_matrix": [
+      1.08,
+      0.0,
+      0.0,
+      0.0,
+      1.04,
+      0.0,
+      0.0,
+      0.0,
+      1.02
+    ]
+  },
+  "physical_references": [
+    "Newson et al. (IEEE TIP 2017): grain model form only",
+    "Reversal (slide) sensitometry conventions from standard literature; no manufacturer data used"
+  ],
+  "calibration": null,
+  "license": "GPL-3.0-or-later (MELOGRAPHY project) \u2014 parameters authored for this project",
+  "provenance_text": "Artist-authored: high-contrast saturated slide look \u2014 punchy blacks via decreasing H&D curves (reversal polarity), minimal crosstalk, very fine grain. No measured calibration."
+}

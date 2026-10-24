@@ -1,0 +1,61 @@
+{
+  "schema": "melography.stock-profile",
+  "id": "cool-800-night",
+  "display_name": "Cool 800 Night",
+  "profile_version": 1,
+  "provenance": "artist-authored",
+  "confidence": "medium",
+  "input_assumption": "neutral-camera-jpeg",
+  "polarity": "negative",
+  "layers": "color",
+  "crop_rule": "fit-width",
+  "m_exc": [0.88, 0.05, 0.04, 0.05, 0.96, 0.06, 0.07, 0.10, 1.14],
+  "crosstalk": [0.0, 0.10, 0.05, 0.08, 0.0, 0.09, 0.04, 0.07, 0.0],
+  "curves": [
+    { "log_e": [-4.6, -3.6, -2.6, -1.6, -0.6, 0.0, 0.4], "density": [0.08, 0.12, 0.34, 0.86, 1.42, 1.66, 1.72] },
+    { "log_e": [-4.6, -3.6, -2.6, -1.6, -0.6, 0.0, 0.4], "density": [0.10, 0.15, 0.38, 0.90, 1.45, 1.68, 1.74] },
+    { "log_e": [-4.6, -3.6, -2.6, -1.6, -0.6, 0.0, 0.4], "density": [0.06, 0.10, 0.30, 0.82, 1.40, 1.70, 1.78] }
+  ],
+  "d_min": [0.08, 0.10, 0.06],
+  "mid_log_e": -2.2,
+  "x_floor": 1e-5,
+  "halation": [
+    { "alpha": 0.05, "kernel": [{ "sigma_mm": 0.014, "weight": 0.65 }, { "sigma_mm": 0.070, "weight": 0.35 }] },
+    { "alpha": 0.012, "kernel": [{ "sigma_mm": 0.012, "weight": 1.0 }] },
+    { "alpha": 0.004, "kernel": [{ "sigma_mm": 0.010, "weight": 1.0 }] }
+  ],
+  "halation_epsilon": 0.05,
+  "grain": {
+    "cells_per_mm": 34,
+    "lambda": 1.6,
+    "mu_r_mm": 0.0085,
+    "sigma_r_mm": 0.0040,
+    "sigma_curve": { "density": [0.0, 0.5, 1.2, 2.2], "sigma": [0.024, 0.055, 0.065, 0.032] },
+    "psd_slope": -0.82,
+    "rho": [1.0, 0.30, 0.18, 0.30, 1.0, 0.28, 0.18, 0.28, 1.0],
+    "seed": 802
+  },
+  "print": {
+    "default_path": "scanner",
+    "d_mask": [0.08, 0.30, 0.58],
+    "paper_curves": [
+      { "log_e": [-3.8, -3.0, -2.2, -1.4, -0.7, -0.3], "density": [0.03, 0.05, 0.24, 1.00, 1.88, 2.10] },
+      { "log_e": [-3.8, -3.0, -2.2, -1.4, -0.7, -0.3], "density": [0.04, 0.06, 0.26, 1.02, 1.90, 2.12] },
+      { "log_e": [-3.8, -3.0, -2.2, -1.4, -0.7, -0.3], "density": [0.04, 0.07, 0.28, 1.05, 1.92, 2.14] }
+    ],
+    "paper_white_density": 0.03,
+    "scanner_black": -3.6,
+    "scanner_white": -0.4,
+    "scanner_gamma": 1.25,
+    "scanner_matrix": [0.96, 0.0, 0.02, 0.0, 1.0, 0.0, 0.02, 0.0, 1.08],
+    "scanner_glare": 0.006,
+    "output_matrix": [0.97, 0.0, 0.03, 0.0, 1.0, 0.01, 0.03, 0.01, 1.05]
+  },
+  "physical_references": [
+    "Newson et al. (IEEE TIP 2017): grain model form only",
+    "High-speed coarse-grain and long-tail halation conventions from standard sensitometry literature; no manufacturer data used"
+  ],
+  "calibration": null,
+  "license": "GPL-3.0-or-later (MELOGRAPHY project) — parameters authored for this project",
+  "provenance_text": "Artist-authored: cool high-speed night look — cobalt shadows, coarse grain, strong red halation around lights, scanner-path inversion. No measured calibration."
+}

@@ -1,0 +1,57 @@
+{
+  "schema": "melography.stock-profile",
+  "id": "classic-monochrome-400",
+  "display_name": "Classic Monochrome 400",
+  "profile_version": 1,
+  "provenance": "artist-authored",
+  "confidence": "medium",
+  "input_assumption": "neutral-camera-jpeg",
+  "polarity": "negative",
+  "layers": "monochrome",
+  "crop_rule": "fit-width",
+  "m_exc": [0.85, 0.85, 0.85, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+  "crosstalk": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+  "curves": [
+    { "log_e": [-4.2, -3.2, -2.2, -1.2, -0.4, 0.2], "density": [0.06, 0.10, 0.35, 1.00, 1.60, 1.78] }
+  ],
+  "d_min": [0.06, 0.06, 0.06],
+  "mid_log_e": -1.9,
+  "x_floor": 1e-5,
+  "halation": [
+    { "alpha": 0.030, "kernel": [{ "sigma_mm": 0.011, "weight": 0.7 }, { "sigma_mm": 0.045, "weight": 0.3 }] },
+    { "alpha": 0.0, "kernel": [{ "sigma_mm": 0.008, "weight": 1.0 }] },
+    { "alpha": 0.0, "kernel": [{ "sigma_mm": 0.008, "weight": 1.0 }] }
+  ],
+  "halation_epsilon": 0.05,
+  "grain": {
+    "cells_per_mm": 40,
+    "lambda": 1.4,
+    "mu_r_mm": 0.0070,
+    "sigma_r_mm": 0.0032,
+    "sigma_curve": { "density": [0.0, 0.5, 1.2, 2.0], "sigma": [0.018, 0.045, 0.052, 0.028] },
+    "psd_slope": -0.85,
+    "rho": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+    "seed": 404
+  },
+  "print": {
+    "default_path": "paper",
+    "d_mask": [0.06, 0.06, 0.06],
+    "paper_curves": [
+      { "log_e": [-3.6, -2.8, -2.0, -1.2, -0.6, -0.25], "density": [0.02, 0.04, 0.30, 1.20, 1.95, 2.12] }
+    ],
+    "paper_white_density": 0.02,
+    "scanner_black": -3.2,
+    "scanner_white": -0.3,
+    "scanner_gamma": 1.0,
+    "scanner_matrix": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+    "scanner_glare": 0.002,
+    "output_matrix": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+  },
+  "physical_references": [
+    "Newson et al. (IEEE TIP 2017): grain model form only",
+    "Silver-halide monochrome sensitometry and silver-grain granularity conventions from standard literature; no manufacturer data used"
+  ],
+  "calibration": null,
+  "license": "GPL-3.0-or-later (MELOGRAPHY project) — parameters authored for this project",
+  "provenance_text": "Artist-authored: classic silver-monochrome 400 look — luminance-only excitation (single layer), pronounced but organic grain, gentle halation. No measured calibration."
+}

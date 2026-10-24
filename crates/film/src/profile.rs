@@ -322,7 +322,9 @@ impl StockProfile {
                 }
             }
         }
-        // M_exc: non-negative, diagonal-dominant (spectral-basis sanity).
+        // M_exc: non-negative everywhere; diagonal-dominant for the color
+        // layout (spectral-basis sanity). Monochrome collapses to a
+        // luminance-like row (FILM_MODEL §D) — dominance does not apply.
         for r in 0..3 {
             let row = self.m_exc.row(r);
             for &v in &row {
@@ -333,12 +335,14 @@ impl StockProfile {
                     });
                 }
             }
-            let off = row[0] + row[1] + row[2] - row[r];
-            if row[r] < off {
-                return Err(ProfileError::Range {
-                    field: format!("m_exc row {r}"),
-                    reason: "must be diagonal-dominant".into(),
-                });
+            if self.layers == LayerLayout::Color {
+                let off = row[0] + row[1] + row[2] - row[r];
+                if row[r] < off {
+                    return Err(ProfileError::Range {
+                        field: format!("m_exc row {r}"),
+                        reason: "must be diagonal-dominant".into(),
+                    });
+                }
             }
         }
         // Crosstalk: zero diagonal, mild off-diagonal (|C_ij| ≤ 0.3).

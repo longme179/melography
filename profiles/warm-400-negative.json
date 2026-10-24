@@ -1,0 +1,61 @@
+{
+  "schema": "melography.stock-profile",
+  "id": "warm-400-negative",
+  "display_name": "Warm 400 Negative",
+  "profile_version": 1,
+  "provenance": "artist-authored",
+  "confidence": "medium",
+  "input_assumption": "neutral-camera-jpeg",
+  "polarity": "negative",
+  "layers": "color",
+  "crop_rule": "fit-width",
+  "m_exc": [1.06, 0.05, 0.02, 0.06, 0.94, 0.05, 0.05, 0.09, 0.82],
+  "crosstalk": [0.0, 0.07, 0.02, 0.05, 0.0, 0.06, 0.02, 0.04, 0.0],
+  "curves": [
+    { "log_e": [-4.0, -3.2, -2.4, -1.6, -0.8, -0.3, 0.0], "density": [0.04, 0.06, 0.18, 0.62, 1.18, 1.44, 1.52] },
+    { "log_e": [-4.0, -3.2, -2.4, -1.6, -0.8, -0.3, 0.0], "density": [0.06, 0.08, 0.22, 0.68, 1.22, 1.46, 1.54] },
+    { "log_e": [-4.0, -3.2, -2.4, -1.6, -0.8, -0.3, 0.0], "density": [0.09, 0.12, 0.28, 0.76, 1.28, 1.50, 1.58] }
+  ],
+  "d_min": [0.04, 0.06, 0.09],
+  "mid_log_e": -1.9,
+  "x_floor": 1e-5,
+  "halation": [
+    { "alpha": 0.045, "kernel": [{ "sigma_mm": 0.012, "weight": 0.75 }, { "sigma_mm": 0.055, "weight": 0.25 }] },
+    { "alpha": 0.008, "kernel": [{ "sigma_mm": 0.010, "weight": 1.0 }] },
+    { "alpha": 0.0, "kernel": [{ "sigma_mm": 0.008, "weight": 1.0 }] }
+  ],
+  "halation_epsilon": 0.05,
+  "grain": {
+    "cells_per_mm": 46,
+    "lambda": 1.1,
+    "mu_r_mm": 0.0060,
+    "sigma_r_mm": 0.0028,
+    "sigma_curve": { "density": [0.0, 0.5, 1.1, 2.0], "sigma": [0.012, 0.032, 0.040, 0.022] },
+    "psd_slope": -0.88,
+    "rho": [1.0, 0.38, 0.22, 0.38, 1.0, 0.32, 0.22, 0.32, 1.0],
+    "seed": 401
+  },
+  "print": {
+    "default_path": "paper",
+    "d_mask": [0.06, 0.28, 0.62],
+    "paper_curves": [
+      { "log_e": [-3.6, -2.8, -2.0, -1.3, -0.7, -0.3], "density": [0.02, 0.04, 0.28, 1.05, 1.85, 2.05] },
+      { "log_e": [-3.6, -2.8, -2.0, -1.3, -0.7, -0.3], "density": [0.03, 0.06, 0.34, 1.12, 1.88, 2.06] },
+      { "log_e": [-3.6, -2.8, -2.0, -1.3, -0.7, -0.3], "density": [0.05, 0.09, 0.42, 1.20, 1.92, 2.08] }
+    ],
+    "paper_white_density": 0.02,
+    "scanner_black": -3.2,
+    "scanner_white": -0.3,
+    "scanner_gamma": 1.1,
+    "scanner_matrix": [1.05, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.95],
+    "scanner_glare": 0.003,
+    "output_matrix": [1.04, 0.02, 0.0, 0.01, 1.0, 0.01, 0.0, 0.02, 0.96]
+  },
+  "physical_references": [
+    "Newson, Faraj, Delon, Galerne — A stochastic film grain model for resolution-independent rendering (IEEE TIP 2017): model form only",
+    "Sensitometry conventions (H&D curves, D-min/orange mask) per standard photographic literature; no manufacturer data used"
+  ],
+  "calibration": null,
+  "license": "GPL-3.0-or-later (MELOGRAPHY project) — parameters authored for this project",
+  "provenance_text": "Artist-authored: a warm-leaning general-purpose 400-speed color negative look — amber highlights, forgiving shoulder, honest grain. No measured calibration."
+}

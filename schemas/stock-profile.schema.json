@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://melography.dev/schemas/stock-profile.schema.json",
+  "title": "MELOGRAPHY stock profile (FILM_MODEL §J)",
+  "description": "Data, not code: versioned, provenance-labelled parameters for the film-emulation chain. Ranges are physics guards — sliders can never create physically undefined states (FILM_MODEL §E).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "id", "display_name", "profile_version", "provenance", "confidence",
+    "input_assumption", "polarity", "layers", "crop_rule", "m_exc", "crosstalk",
+    "curves", "d_min", "mid_log_e", "x_floor", "halation", "halation_epsilon",
+    "grain", "print", "physical_references", "license", "provenance_text"
+  ],
+  "properties": {
+    "schema": { "const": "melography.stock-profile" },
+    "id": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "display_name": { "type": "string", "minLength": 1 },
+    "profile_version": { "type": "integer", "minimum": 1, "maximum": 1 },
+    "provenance": { "enum": ["measured", "reference-fitted", "artist-authored", "experimental"] },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "input_assumption": { "enum": ["phone-heavily-processed", "neutral-camera-jpeg", "unknown"] },
+    "polarity": { "enum": ["negative", "reversal"] },
+    "layers": { "enum": ["color", "monochrome"] },
+    "crop_rule": { "enum": ["fit-width", "fit-height"] },
+    "m_exc": {
+      "type": "array", "minItems": 9, "maxItems": 9,
+      "items": { "type": "number", "minimum": 0 }
+    },
+    "crosstalk": {
+      "type": "array", "minItems": 9, "maxItems": 9,
+      "items": { "type": "number", "minimum": -0.3, "maximum": 0.3 }
+    },
+    "curves": {
+      "type": "array", "minItems": 1, "maxItems": 3,
+      "items": { "$ref": "#/$defs/layerCurve" }
+    },
+    "d_min": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "items": { "type": "number", "minimum": 0 }
+    },
+    "mid_log_e": { "type": "number", "minimum": -6, "maximum": 2 },
+    "x_floor": { "type": "number", "exclusiveMinimum": 0 },
+    "halation": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/halationChannel" } },
+    "halation_epsilon": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.05 },
+    "grain": { "$ref": "#/$defs/grain" },
+    "print": { "$ref": "#/$defs/print" },
+    "physical_references": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "calibration": { "oneOf": [{ "$ref": "#/$defs/calibration" }, { "type": "null" }] },
+    "license": { "type": "string", "minLength": 1 },
+    "provenance_text": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "layerCurve": {
+      "type": "object", "additionalProperties": false,
+      "required": ["log_e", "density"],
+      "properties": {
+        "log_e": { "type": "array", "minItems": 2, "items": { "type": "number" } },
+        "density": { "type": "array", "minItems": 2, "items": { "type": "number", "minimum": 0 } }
+      }
+    },
+    "halationChannel": {
+      "type": "object", "additionalProperties": false,
+      "required": ["alpha", "kernel"],
+      "properties": {
+        "alpha": { "type": "number", "minimum": 0, "maximum": 0.05 },
+        "kernel": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["sigma_mm", "weight"],
+            "properties": {
+              "sigma_mm": { "type": "number", "exclusiveMinimum": 0 },
+              "weight": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "sigmaCurve": {
+      "type": "object", "additionalProperties": false,
+      "required": ["density", "sigma"],
+      "properties": {
+        "density": { "type": "array", "minItems": 1, "items": { "type": "number", "minimum": 0 } },
+        "sigma": { "type": "array", "minItems": 1, "items": { "type": "number", "minimum": 0 } }
+      }
+    },
+    "grain": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "cells_per_mm", "lambda", "mu_r_mm", "sigma_r_mm",
+        "sigma_curve", "psd_slope", "rho", "seed"
+      ],
+      "properties": {
+        "cells_per_mm": { "type": "number", "exclusiveMinimum": 1 },
+        "lambda": { "type": "number", "exclusiveMinimum": 0 },
+        "mu_r_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "sigma_r_mm": { "type": "number", "minimum": 0 },
+        "sigma_curve": { "$ref": "#/$defs/sigmaCurve" },
+        "psd_slope": { "type": "number", "minimum": -10, "maximum": 10 },
+        "rho": { "type": "array", "minItems": 9, "maxItems": 9, "items": { "type": "number", "minimum": -1, "maximum": 1 } },
+        "seed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "print": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "default_path", "d_mask", "paper_curves", "paper_white_density",
+        "scanner_black", "scanner_white", "scanner_gamma", "scanner_matrix",
+        "scanner_glare", "output_matrix"
+      ],
+      "properties": {
+        "default_path": { "enum": ["paper", "scanner", "direct-scan"] },
+        "d_mask": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number", "minimum": 0 } },
+        "paper_curves": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/layerCurve" } },
+        "paper_white_density": { "type": "number", "minimum": 0, "maximum": 0.3 },
+        "scanner_black": { "type": "number", "maximum": 1 },
+        "scanner_white": { "type": "number", "minimum": -1 },
+        "scanner_gamma": { "type": "number", "minimum": 0.5, "maximum": 3 },
+        "scanner_matrix": { "type": "array", "minItems": 9, "maxItems": 9, "items": { "type": "number" } },
+        "scanner_glare": { "type": "number", "minimum": 0 },
+        "output_matrix": { "type": "array", "minItems": 9, "maxItems": 9, "items": { "type": "number" } }
+      }
+    },
+    "calibration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dataset", "illuminant", "rendering_conditions", "fit_report"],
+      "properties": {
+        "dataset": { "type": "string", "minLength": 1 },
+        "illuminant": { "type": "string", "minLength": 1 },
+        "rendering_conditions": { "type": "string", "minLength": 1 },
+        "fit_report": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

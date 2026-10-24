@@ -231,9 +231,10 @@ pub fn resolve_emulsion(profile: &StockProfile, adj: &Adjustments, mm_per_pixel:
     }
     // Effective γ guard: base γ per layer from the spline, clamp the
     // multiplier so γ_eff ∈ [0.3, 1.6] (sliders cannot create physically
-    // undefined states — §E guards).
+    // undefined states — §E guards). Monochrome has one active layer.
     let base_splines = profile.hd_splines();
-    for (c, gm) in gamma_mult.iter_mut().enumerate() {
+    let n_active = base_splines.len();
+    for (c, gm) in gamma_mult.iter_mut().enumerate().take(n_active) {
         let base_gamma = base_splines[c].max_gradient();
         let eff = base_gamma * *gm;
         if eff < 0.3 {
