@@ -4,15 +4,16 @@
 
 ## Current milestone
 
-**M1 (LUT workflow MVP)** — feature-complete on branch
-`agent/m1-lut-workflow` (8 commits, local suites green). Issues #7/#8/#9
-implemented; PR #18 (M0) merged by owner 2026-10-24T04:22Z. Next gate:
-push + CI on 3 OSes + owner review.
+**M1 (LUT workflow MVP)** — **CI GREEN 13/13** on branch
+`agent/m1-lut-workflow` (run 40068658895, commit `1509b0f`), draft
+**PR #19** open awaiting owner review. GPU parity measured on real
+adapters: macos Metal worst |Δ| = 1.19e-7, windows WARP bit-exact.
+PR #18 (M0) merged by owner 2026-10-24T04:22Z.
 
 ## Branch / PR / HEAD
 
-- Working branch: `agent/m1-lut-workflow` @ `606cdfa` (not yet pushed)
-- M0 PR #18 merged (`9154d30` on main).
+- Working branch: `agent/m1-lut-workflow` @ `1509b0f` (pushed)
+- **Draft PR #19:** https://github.com/longme179/melography/pull/19
 - Issue permissions: PAT now has them (verified — closed #3/#5/#6 with
   evidence comments; commented #7). Branch protection on `main`: still
   owner-side (PAT lacks Administration:write — unchanged).
@@ -47,12 +48,16 @@ push + CI on 3 OSes + owner review.
 
 ## CI status
 
-Previous full run on main: GREEN 12/12 (M0, commit `1668e76`). The M1
-push adds: oracle-freshness step (docs-validation) + `app-build` job
-(ubuntu: webkit apt + npm + tsc + vite + cargo fmt/clippy/test +
-cargo-deny on the app lockfile). **First run of the branch is the
-authoritative 3-OS verification** — watch app-build (new) and the
-macos/windows lut3d parity lines in logs.
+**GREEN 13/13** on `1509b0f` (run 40068658895) — incl. the new
+`app-build` job (first run), oracle-freshness + architecture-guard
+steps, and the lut3d GPU parity gate on macos Metal (1.19e-7) and
+windows WARP (bit-exact). Getting there took 3 fix iterations:
+missing cargo-deny install in the app job → wrong flag position →
+deny.toml needed MPL-2.0 allowlist + the tauri/wry global ban replaced
+by the per-graph architecture guard (a lesson: an earlier CI edit had
+silently no-op'd — the oracle step never landed until
+assertion-verified re-insertion; all future workflow edits must assert
+content).
 
 ## Active work
 
@@ -61,17 +66,16 @@ pushed branch, fix any 3-OS fallout, address owner review.
 
 ## Next five atomic actions (in order)
 
-1. Push `agent/m1-lut-workflow`; open the M1 draft PR (body maps issues
-   #7/#8/#9 → commits → verification evidence).
-2. Verify the first CI run end-to-end (esp. app-build + oracle step +
-   GPU parity on macos/windows); fix fallout with small `fix:` commits.
-3. Owner reviews the PR; on approval+merge close #7/#8/#9 with evidence
-   comments (leave #4 open — webview legs, see below).
-4. M2 kickoff per PLAN (film chain stages A–I, tests-first on the CPU
-   oracle — issues #10/#11/#12).
-5. Owner-side standing items: reference-device measurements (PLAN §4
-   provisional lines), S1 webview-IPC + S2 double-transform legs (issue
-   #4) — need a live GUI run (xvfb harness or owner devices).
+1. Owner reviews draft PR #19 (evidence-mapped body; 13/13 CI green).
+2. Address review comments (small `fix:`/`docs:` commits, same branch).
+3. On approval+merge: close #7/#8/#9 with evidence comments (leave #4
+   open — webview legs); start M2 per PLAN (film chain stages A–I,
+   tests-first on the CPU oracle — issues #10/#11/#12).
+4. Owner-side standing items: reference-device measurements (PLAN §4
+   provisional lines); S1 webview-IPC + S2 double-transform legs (issue
+   #4) need a live GUI run (xvfb harness or owner devices).
+5. Keep the sandbox sysroot alive (`~/melography-sysroot`) for M2 app
+   work; watch disk (the tauri tree filled it once this session).
 
 ## Environment notes for next agent
 
