@@ -53,3 +53,7 @@ default = ["gui"]
 # The real window app (wry webview). CI's app-build job and bundled builds
 # use default features; headless check (no webkit headers) disables it.
 gui = ["tauri/wry", "dep:tauri-plugin-dialog"]
+
+[dev-dependencies]
+# Unique panic-safe temp dirs (see the lut crate note).
+tempfile = "3"

@@ -74,10 +74,10 @@ mod tests {
     use super::*;
 
     fn tiny_png() -> std::io::Result<Vec<u8>> {
-        // 4×2 RGB8 PNG via our own encoder (no raw png-crate usage in tests)
-        let dir = std::env::temp_dir().join("melography_io_test");
-        std::fs::create_dir_all(&dir)?;
-        let p = dir.join("tiny_src.png");
+        // 4×2 RGB8 PNG via our own encoder (no raw png-crate usage in tests).
+        // Unique panic-safe temp dir (drop = cleanup).
+        let dir = tempfile::tempdir()?;
+        let p = dir.path().join("tiny_src.png");
         super::super::encode::encode_png8(
             &p,
             4,
@@ -94,9 +94,8 @@ mod tests {
     #[test]
     fn decodes_png_with_orientation_flag() {
         let buf = tiny_png().unwrap();
-        let dir = std::env::temp_dir().join("melography_io_test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("tiny.png");
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("tiny.png");
         std::fs::write(&p, buf).unwrap();
         let img = decode_file(&p).unwrap();
         assert_eq!((img.pixels.width(), img.pixels.height()), (4, 2));

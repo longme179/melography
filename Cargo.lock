@@ -1113,6 +1113,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -1179,6 +1180,7 @@ dependencies = [
  "melography-core",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -1191,6 +1193,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "thiserror",
 ]
 

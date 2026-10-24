@@ -246,12 +246,11 @@ mod tests {
     #[test]
     fn jpeg_app2_icc_roundtrip_single_and_multi_chunk() {
         let (w, h, px) = crate::chart::synthetic_chart_u8();
-        let dir = std::env::temp_dir().join("melography_io_jpeg");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
 
         // Single-chunk: a small real profile.
         let icc = melography_color::icc_bytes_deterministic(&melography_color::srgb_profile());
-        let p = dir.join("icc1.jpg");
+        let p = dir.path().join("icc1.jpg");
         encode_jpeg_u8_with_icc(&p, w, h, &px, 90, &icc).unwrap();
         let jpeg = std::fs::read(&p).unwrap();
         assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
@@ -264,7 +263,7 @@ mod tests {
         // Multi-chunk: force chunking with a >65519-byte payload (padding
         // a synthetic profile-like blob).
         let big: Vec<u8> = (0..70_000u32).map(|i| (i % 251) as u8).collect();
-        let p2 = dir.join("icc2.jpg");
+        let p2 = dir.path().join("icc2.jpg");
         encode_jpeg_u8_with_icc(&p2, w, h, &px, 90, &big).unwrap();
         let jpeg2 = std::fs::read(&p2).unwrap();
         let extracted2 = extract_app2_icc(&jpeg2).unwrap().expect("profile present");
@@ -275,9 +274,8 @@ mod tests {
     #[test]
     fn plain_jpeg_has_no_icc_segment() {
         let (w, h, px) = crate::chart::synthetic_chart_u8();
-        let dir = std::env::temp_dir().join("melography_io_jpeg");
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("plain.jpg");
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("plain.jpg");
         encode_jpeg_u8(&p, w, h, &px, 90).unwrap();
         let jpeg = std::fs::read(&p).unwrap();
         assert!(extract_app2_icc(&jpeg).unwrap().is_none());
@@ -285,9 +283,8 @@ mod tests {
 
     #[test]
     fn png16_roundtrip_via_decode() {
-        let dir = std::env::temp_dir().join("melography_io_enc");
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("rt16.png");
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("rt16.png");
         let (w, h, px) = crate::chart::synthetic_chart_u16();
         encode_png16(&p, w, h, &px, None).unwrap();
         let decoded = crate::decode::decode_file(&p).unwrap();

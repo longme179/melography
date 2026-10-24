@@ -42,14 +42,11 @@ fn warm_gradient_image(w: u32, h: u32) -> melography_core::ImageF32 {
 
 #[test]
 fn session_library_preview_flow() {
-    let dir = std::env::temp_dir().join(format!(
-        "melography-app-it-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    // Unique, panic-safe temp dir (drop = cleanup; replaces the hand-rolled
+    // nanos-clock naming — see the lut crate note on the macOS µs-granularity
+    // collision flake, PR #22 run 40086829632).
+    let _td = tempfile::tempdir().unwrap();
+    let dir = _td.path().to_path_buf();
 
     // "Open" a session: decode-free construction of the same state the
     // command layer builds (AP1 base + fingerprint).
@@ -120,5 +117,4 @@ fn session_library_preview_flow() {
     );
 
     let _ = Arc::new(0); // keep Arc import meaningful for future shared luts
-    std::fs::remove_dir_all(&dir).ok();
 }

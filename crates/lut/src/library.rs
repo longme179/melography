@@ -347,21 +347,24 @@ mod tests {
         s
     }
 
-    fn tmpdir() -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "melography-lib-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    /// Unique, panic-safe temp dir. Returns the guard (keep it alive for
+    /// the test body; cleanup is automatic on drop — even on panic) plus a
+    /// PathBuf so existing `dir.join(...)` call sites stay unchanged.
+    /// Replaces the hand-rolled nanos-clock naming that collided on macOS
+    /// (µs clock granularity → shared dir → rename ENOENT flake,
+    /// PR #22 run 40086829632).
+    fn tmpdir() -> (tempfile::TempDir, PathBuf) {
+        let guard = tempfile::Builder::new()
+            .prefix("melography-lut-test-")
+            .tempdir()
+            .unwrap();
+        let path = guard.path().to_path_buf();
+        (guard, path)
     }
 
     #[test]
     fn import_load_verify_roundtrip() {
-        let dir = tmpdir();
+        let (_td, dir) = tmpdir();
         let src = dir.join("my_lut.cube");
         std::fs::write(&src, identity_cube_2d()).unwrap();
 
@@ -390,13 +393,11 @@ mod tests {
         let a = serde_json::to_string(&lib.load_index().unwrap()).unwrap();
         let b = serde_json::to_string(&lib.load_index().unwrap()).unwrap();
         assert_eq!(a, b);
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn missing_and_corrupt_error_states() {
-        let dir = tmpdir();
+        let (_td, dir) = tmpdir();
         let lib = LutLibrary::open(&dir);
         let err = lib.load("deadbeef").unwrap_err();
         assert!(matches!(err, LibraryError::Missing { .. }));
@@ -415,8 +416,6 @@ mod tests {
         std::fs::write(lib.blob_path(&rec.content_hash), "tampered").unwrap();
         let err = lib.load(&rec.content_hash).unwrap_err();
         assert!(matches!(err, LibraryError::ChecksumMismatch { .. }));
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

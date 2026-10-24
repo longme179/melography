@@ -25,3 +25,8 @@ bytemuck = "1"
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# Unique panic-safe temp dirs (see the lut crate note; same macOS µs-clock
+# collision class fixed repo-wide).
+tempfile = "3"
