@@ -1,0 +1,7 @@
+{
+  "origin": "generated placeholder by this project (M0/M1 skeleton work)",
+  "license": "GPL-3.0-or-later (project-authored asset)",
+  "sha256": "914566c5dd271b5dafd2c206a8bca20b81d890ec634e31765351de9dfea1feda",
+  "size_bytes": 7025,
+  "note": "project-authored placeholder app icon committed with the Tauri 2 editor shell (M1, commit 472d0db 'feat(app): Tauri 2 editor shell MVP'); simple generated PNG, no third-party art"
+}

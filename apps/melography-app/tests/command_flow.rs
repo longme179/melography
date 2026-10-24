@@ -91,7 +91,7 @@ fn session_library_preview_flow() {
     assert!(f1.rgba.len() == 64 * 43 * 4);
     let f2 = compose_preview(&ap1, &mut st.preview_cache, &stack, None, None, 64).unwrap();
     assert_eq!(f1.rgba, f2.rgba);
-    assert_eq!(st.preview_cache.as_ref().unwrap().key, base_key);
+    assert_eq!(st.preview_cache.slot.as_ref().unwrap().key, base_key);
 
     // Parameter change invalidates.
     st.lut_stack[0].intensity = 0.0;

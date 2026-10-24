@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Generate the deterministic seed corpus for fuzz/ (issue #25).
+
+Dev-time tool (Pillow is never a product dependency): creates tiny valid
+images in all four fuzzed container formats, plus the JSON seeds the
+sidecar/manifest targets start from. Everything is deterministic — fixed
+pixel recipes, fixed encoder settings — so the committed seeds and their
+provenance records (sha256, generator = this script) always match. Re-run
+after changing a recipe; `scripts/provenance_check.py` verifies the
+committed binaries against their records.
+
+Usage:  python3 scripts/gen_fuzz_corpus.py   (from the repo root)
+Requires: Pillow >= 10 with WebP support (dev-only).
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageCms
+
+REPO = Path(__file__).resolve().parent.parent
+CORPUS = REPO / "fuzz" / "corpus"
+
+
+def gradient(w: int, h: int, variant: int) -> Image.Image:
+    """Deterministic RGB gradient (no RNG — reproducible everywhere)."""
+    px = Image.new("RGB", (w, h))
+    for y in range(h):
+        for x in range(w):
+            r = (x * 255) // max(w - 1, 1)
+            g = (y * 255) // max(h - 1, 1)
+            b = ((x + y + variant) * 255 // (w + h)) % 256
+            px.putpixel((x, y), (r, g, b))
+    return px
+
+
+def write_images() -> list[Path]:
+    out: list[Path] = []
+    dst = CORPUS / "decode_image"
+    dst.mkdir(parents=True, exist_ok=True)
+    # Two geometries × the four fuzzed containers. Tiny on purpose: the
+    # fuzzer mutates structure, not megapixel payloads.
+    for i, (w, h) in enumerate([(8, 6), (17, 5)]):
+        img = gradient(w, h, variant=i)
+        img.save(dst / f"grad{i}.png", format="PNG", optimize=True)
+        img.save(dst / f"grad{i}.jpg", format="JPEG", quality=90, subsampling=0)
+        img.save(dst / f"grad{i}.tif", format="TIFF", compression="raw")
+        img.save(dst / f"grad{i}.webp", format="WEBP", quality=90, lossless=False)
+        out += [dst / f"grad{i}{ext}" for ext in (".png", ".jpg", ".tif", ".webp")]
+    # One PNG carrying a real embedded ICC profile (exercises the ICC
+    # extraction leg of S0).
+    srgb = ImageCms.createProfile("sRGB")
+    icc_bytes = ImageCms.ImageCmsProfile(srgb).tobytes()
+    gradient(12, 9, variant=2).save(dst / "with_icc.png", format="PNG", icc_profile=icc_bytes)
+    out.append(dst / "with_icc.png")
+    # One grayscale PNG (channel-conversion leg).
+    gradient(10, 10, variant=3).convert("L").save(dst / "gray.png", format="PNG")
+    out.append(dst / "gray.png")
+    return out
+
+
+def write_sidecar_seeds() -> None:
+    dst = CORPUS / "sidecar_json"
+    dst.mkdir(parents=True, exist_ok=True)
+    # Valid v1 (shape from crates/presets/src/sidecar.rs module docs).
+    v1 = {
+        "schema": "melography.recipe",
+        "version": 1,
+        "created_utc": "2026-10-24T00:00:00Z",
+        "modified_utc": "2026-10-24T00:00:00Z",
+        "image": {
+            "original_name": "photo.jpg",
+            "input_encoding": "untagged_srgb",
+            "fingerprint": {
+                "size_bytes": 12345,
+                "sha256_file": "ab" * 32,
+                "luma_hash_8x8": "cd" * 32,
+            },
+        },
+        "pipeline": {
+            "stages": [
+                {"stage": "film_identity", "enabled": True},
+                {
+                    "stage": "lut",
+                    "instance": "ef" * 32,
+                    "insertion": "Finishing",
+                    "intensity": 0.75,
+                    "declared_input": "rec709_display_linear",
+                    "declared_output": "rec709_display_linear",
+                    "enabled": True,
+                },
+            ]
+        },
+        "unknown_future_field": {"kept": "inert"},
+    }
+    (dst / "v1_valid.json").write_text(json.dumps(v1, indent=1))
+    # Minimal v1 (fingerprint optional).
+    minimal = {
+        "schema": "melography.recipe",
+        "version": 1,
+        "image": {"original_name": "x.png", "input_encoding": "untagged_srgb"},
+        "pipeline": {"stages": []},
+    }
+    (dst / "v1_minimal.json").write_text(json.dumps(minimal, indent=1))
+    # A v0-shaped document (migration-chain entry point).
+    legacy = {
+        "schema": "melography.recipe",
+        "version": 0,
+        "image": {"original_name": "old.jpg"},
+        "pipeline": {"stages": [{"stage": "lut", "instance": "ab" * 32}]},
+    }
+    (dst / "v0_legacy.json").write_text(json.dumps(legacy, indent=1))
+
+
+def write_manifest_seeds() -> None:
+    dst = CORPUS / "manifest_json"
+    dst.mkdir(parents=True, exist_ok=True)
+    # Mirrors crates/ai `tests::good()` (the gate-passing shape).
+    good = {
+        "id": "melography-autolight-dummy",
+        "version": "0.1.0",
+        "task": "exposure/white-balance parameter prediction (evaluation plumbing only)",
+        "output_kind": "Parameters",
+        "sha256": "a" * 64,
+        "size_bytes": 1024,
+        "weights_license": "CC0-1.0 (generated by this project)",
+        "source_url": "https://github.com/longme179/melography",
+        "license_cleared_by_owner": True,
+        "redistributable": True,
+        "upstream": {
+            "repo": "longme179/melography",
+            "uri": "https://github.com/longme179/melography/releases/download/ai/melography-autolight-dummy.onnx",
+            "revision": "generated-by-tools-gen_dummy_onnx",
+        },
+        "runtime": {
+            "opset": 17,
+            "input_shape": "1x3x64x64",
+            "input_encoding": "srgb-display",
+            "preprocess": "area-downscale to 64px, sRGB decode, /255",
+            "output_semantics": "[ev, wb_r, wb_g, wb_b, highlights, shadows]",
+            "output_ranges": "ev [-3,3]; gains [0.5,2]; hl/sh [-100,100]",
+            "quantization": "none",
+            "min_runtime": "ort-2.0.0-rc.15",
+        },
+        "eps": {"tested": ["cpu"], "optional": []},
+        "measurements": {
+            "linux-x86_64-cpu": {
+                "latency_ms": 1.0,
+                "rss_mb": 12.0,
+                "quality": "plumbing proof, not a shipping candidate",
+            }
+        },
+        "known_issues": [],
+    }
+    (dst / "good.json").write_text(json.dumps(good, indent=1))
+    # License-unclear variant (vet must reject, parse must succeed).
+    bad = dict(good)
+    bad["id"] = "third-party-model"
+    bad["license_cleared_by_owner"] = False
+    bad["weights_license"] = "unknown"
+    (dst / "license_unclear.json").write_text(json.dumps(bad, indent=1))
+
+
+def main() -> int:
+    files = write_images()
+    write_sidecar_seeds()
+    write_manifest_seeds()
+    print(f"decode_image seeds : {len(files)} files")
+    print(f"cube_parser seeds  : {len(list((CORPUS / 'cube_parser').glob('*.cube')))} files")
+    print(f"sidecar_json seeds : {len(list((CORPUS / 'sidecar_json').glob('*.json')))} files")
+    print(f"manifest_json seeds: {len(list((CORPUS / 'manifest_json').glob('*.json')))} files")
+    print("regenerate provenance records next: scripts/provenance_check.py --write-missing")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -12,6 +12,7 @@
 //! `error` (ARCHITECTURE §8 taxonomy → stable UI codes).
 
 pub mod batch;
+pub mod cache;
 pub mod commands;
 pub mod error;
 pub mod export;
@@ -110,6 +111,7 @@ pub fn run() {
                 // M4 #23: settings, recents (S1), presets (S5), color panel.
                 commands::get_settings,
                 commands::set_settings,
+                commands::cache_stats,
                 commands::list_recents,
                 commands::purge_recents,
                 commands::list_presets,

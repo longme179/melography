@@ -11,11 +11,25 @@
 //!
 //! Bit depth/alpha support is *per-format factual*: impossible combinations
 //! are absent from these APIs (they never silently convert).
+//!
+//! **Crash safety (#25):** every encoder publishes through
+//! `melography_core::durable::atomic_write_durable[_with]` (temp sibling →
+//! fsync → rename). A process killed at any point during an export leaves
+//! the destination either absent or a complete, decodable image — never a
+//! torn file. Enforced by the real SIGKILL battery in
+//! `tests/export_kill.rs` (PLAN M4 "kill during export").
 
 use crate::IoError;
 use image::ImageEncoder;
+use melography_core::durable::{atomic_write_durable, atomic_write_durable_with};
 use std::io::Write;
 use std::path::Path;
+
+/// Map an atomic-publish failure to the encoder error type (shared by all
+/// four encoders — the temp/fsync/rename machinery is one primitive).
+fn publish_err(path: &Path, e: std::io::Error) -> IoError {
+    IoError::Encode(format!("atomic write {}: {e}", path.display()))
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("encode error: {0}")]
@@ -29,21 +43,23 @@ pub fn encode_png16(
     rgb_u16: &[u16],
     icc: Option<&[u8]>,
 ) -> Result<(), IoError> {
-    let file = std::fs::File::create(path)
-        .map_err(|e| IoError::Encode(format!("create {}: {e}", path.display())))?;
-    let mut enc = image::codecs::png::PngEncoder::new_with_quality(
-        std::io::BufWriter::new(file),
-        image::codecs::png::CompressionType::Default,
-        image::codecs::png::FilterType::Adaptive,
-    );
-    if let Some(icc) = icc {
-        enc.set_icc_profile(icc.to_vec())
-            .map_err(|e| IoError::Encode(format!("icc attach: {e}")))?;
-    }
-    let bytes: &[u8] = bytemuck::cast_slice(rgb_u16);
-    enc.write_image(bytes, width, height, image::ExtendedColorType::Rgb16)
-        .map_err(IoError::Decode)?;
-    Ok(())
+    atomic_write_durable_with(path, |file| {
+        let mut w = std::io::BufWriter::new(file);
+        let mut enc = image::codecs::png::PngEncoder::new_with_quality(
+            &mut w,
+            image::codecs::png::CompressionType::Default,
+            image::codecs::png::FilterType::Adaptive,
+        );
+        if let Some(icc) = icc {
+            enc.set_icc_profile(icc.to_vec())
+                .map_err(std::io::Error::other)?;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(rgb_u16);
+        enc.write_image(bytes, width, height, image::ExtendedColorType::Rgb16)
+            .map_err(std::io::Error::other)?;
+        w.flush()
+    })
+    .map_err(|e| publish_err(path, e))
 }
 
 /// Encode 8-bit RGB PNG with an embedded ICC profile.
@@ -54,20 +70,22 @@ pub fn encode_png8(
     rgb_u8: &[u8],
     icc: Option<&[u8]>,
 ) -> Result<(), IoError> {
-    let file = std::fs::File::create(path)
-        .map_err(|e| IoError::Encode(format!("create {}: {e}", path.display())))?;
-    let mut enc = image::codecs::png::PngEncoder::new_with_quality(
-        std::io::BufWriter::new(file),
-        image::codecs::png::CompressionType::Default,
-        image::codecs::png::FilterType::Adaptive,
-    );
-    if let Some(icc) = icc {
-        enc.set_icc_profile(icc.to_vec())
-            .map_err(|e| IoError::Encode(format!("icc attach: {e}")))?;
-    }
-    enc.write_image(rgb_u8, width, height, image::ExtendedColorType::Rgb8)
-        .map_err(IoError::Decode)?;
-    Ok(())
+    atomic_write_durable_with(path, |file| {
+        let mut w = std::io::BufWriter::new(file);
+        let mut enc = image::codecs::png::PngEncoder::new_with_quality(
+            &mut w,
+            image::codecs::png::CompressionType::Default,
+            image::codecs::png::FilterType::Adaptive,
+        );
+        if let Some(icc) = icc {
+            enc.set_icc_profile(icc.to_vec())
+                .map_err(std::io::Error::other)?;
+        }
+        enc.write_image(rgb_u8, width, height, image::ExtendedColorType::Rgb8)
+            .map_err(std::io::Error::other)?;
+        w.flush()
+    })
+    .map_err(|e| publish_err(path, e))
 }
 
 /// Encode 8-bit JPEG at the given quality (1–100).
@@ -78,15 +96,14 @@ pub fn encode_jpeg_u8(
     rgb_u8: &[u8],
     quality: u8,
 ) -> Result<(), IoError> {
-    let file = std::fs::File::create(path)
-        .map_err(|e| IoError::Encode(format!("create {}: {e}", path.display())))?;
-    let mut buf = std::io::BufWriter::new(file);
-    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
-    enc.encode(rgb_u8, width, height, image::ExtendedColorType::Rgb8)
-        .map_err(IoError::Decode)?;
-    buf.flush()
-        .map_err(|e| IoError::Encode(format!("flush: {e}")))?;
-    Ok(())
+    atomic_write_durable_with(path, |file| {
+        let mut w = std::io::BufWriter::new(file);
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, quality);
+        enc.encode(rgb_u8, width, height, image::ExtendedColorType::Rgb8)
+            .map_err(std::io::Error::other)?;
+        w.flush()
+    })
+    .map_err(|e| publish_err(path, e))
 }
 
 /// Encode 8-bit JPEG with an embedded ICC profile (APP2 `ICC_PROFILE`
@@ -109,10 +126,8 @@ pub fn encode_jpeg_u8_with_icc(
     }
     // 2. Splice APP2 ICC segments right after SOI.
     let spliced = splice_app2_icc(&jpeg, icc)?;
-    // 3. Write atomically-ish (direct write; export targets are new files).
-    std::fs::write(path, &spliced)
-        .map_err(|e| IoError::Encode(format!("write {}: {e}", path.display())))?;
-    Ok(())
+    // 3. Publish atomically (temp → fsync → rename; kill-safe export).
+    atomic_write_durable(path, &spliced).map_err(|e| publish_err(path, e))
 }
 
 /// Insert `ICC_PROFILE` APP2 segments after the SOI marker of a encoded
@@ -227,16 +242,15 @@ pub fn encode_tiff_u16(
     height: u32,
     rgb_u16: &[u16],
 ) -> Result<(), IoError> {
-    let file = std::fs::File::create(path)
-        .map_err(|e| IoError::Encode(format!("create {}: {e}", path.display())))?;
-    let mut buf = std::io::BufWriter::new(file);
-    let enc = image::codecs::tiff::TiffEncoder::new(&mut buf);
-    let bytes: &[u8] = bytemuck::cast_slice(rgb_u16);
-    enc.write_image(bytes, width, height, image::ExtendedColorType::Rgb16)
-        .map_err(IoError::Decode)?;
-    buf.flush()
-        .map_err(|e| IoError::Encode(format!("flush: {e}")))?;
-    Ok(())
+    atomic_write_durable_with(path, |file| {
+        let mut w = std::io::BufWriter::new(file);
+        let enc = image::codecs::tiff::TiffEncoder::new(&mut w);
+        let bytes: &[u8] = bytemuck::cast_slice(rgb_u16);
+        enc.write_image(bytes, width, height, image::ExtendedColorType::Rgb16)
+            .map_err(std::io::Error::other)?;
+        w.flush()
+    })
+    .map_err(|e| publish_err(path, e))
 }
 
 #[cfg(test)]

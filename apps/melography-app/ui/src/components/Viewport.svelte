@@ -7,6 +7,7 @@
     renderPreview,
     originalFrame,
     wbPick,
+    cacheStats,
     type PreviewFrame,
   } from "../lib/ipc";
   import { t, fmtNum } from "../lib/i18n";
@@ -32,6 +33,7 @@
   let edited: PreviewFrame | null = null;
   let original: PreviewFrame | null = null;
   let renderMs = 0;
+  let cacheLabel = ""; // #25: preview cache hit-rate ("cache 87%" / "cache off")
   let showOriginal = false; // hold-B
   let panX = 0;
   let panY = 0;
@@ -60,6 +62,18 @@
       announceRender(renderMs);
       original = await originalFrame(maxDim);
       blit();
+      // #25: cache hit-rate in the status bar — non-blocking, never
+      // delays the blit for a diagnostics read.
+      cacheStats()
+        .then((cs) => {
+          cacheLabel =
+            cs.preview.hits + cs.preview.misses === 0
+              ? "" // nothing measured yet — show nothing, not a fake 0%
+              : cs.preview.cached
+                ? t("viewport.cache", { n: Math.round(cs.preview.hit_rate_pct) })
+                : t("viewport.cacheOff");
+        })
+        .catch(() => (cacheLabel = ""));
     } catch (e) {
       console.error("preview render failed", e);
     }
@@ -292,6 +306,10 @@
     </div>
     <div class="status mono">
       <span>{fmtNum(renderMs, 1)} ms {t("viewport.renderMs")}</span>
+      {#if cacheLabel}
+        <span>·</span>
+        <span>{cacheLabel}</span>
+      {/if}
       <span>·</span>
       <span>{fmtNum(Math.round($zoom * 100), 0)}%{loupeZoom ? " · " + t("viewport.loupe") : ""}</span>
       <span aria-hidden="true">·</span>

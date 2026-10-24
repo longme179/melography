@@ -61,9 +61,20 @@ jobs:
       - name: Validate docs inventory, parsers, links, secrets
         run: python3 scripts/validate_docs.py
       - name: Shell syntax
-        run: bash -n scripts/fetch_refs.sh
+        run: |
+          bash -n scripts/fetch_refs.sh \
+            scripts/build/build-linux.sh scripts/build/build-macos.sh
       - name: Python compile
-        run: python3 -m py_compile scripts/fetch_refs.py scripts/validate_docs.py
+        run: |
+          python3 -m py_compile scripts/fetch_refs.py scripts/validate_docs.py \
+            scripts/secret_scan.py scripts/provenance_check.py \
+            scripts/error_inventory.py scripts/gen_fuzz_corpus.py
+      - name: Secret scan (#25 — full pattern set + .gitignore policy executable)
+        run: python3 scripts/secret_scan.py
+      - name: Provenance gate (#25 — every binary asset has a sha-verified record)
+        run: python3 scripts/provenance_check.py
+      - name: Error-state inventory (#25 — Rust codes × EN/VI catalogs × matrix rows)
+        run: python3 scripts/error_inventory.py
       - name: LUT oracle fixture freshness (issue #7)
         run: python3 tools/lut_oracle.py --verify crates/lut/tests/oracle_fixtures.json
       - name: Architecture guard (ARCHITECTURE §2 — core stays UI-agnostic)
@@ -141,6 +152,70 @@ jobs:
       # exposes WARP ('Microsoft Basic Render Driver') — both run the REAL
       # wgpu gates (S1 readback + M1 lut3d CPU↔GPU parity ≤ 1e-6); ubuntu
       # runners have no adapter and the tests report an honest skip.
+
+  # ── M4 #25: memory budget gate — ≤ 2 GiB peak RSS for a 50 MP
+  #    decode → render → export (PLAN §4). Release-mode #[ignore]d test
+  #    like the film gates; prints the hardware used. Linux reports the
+  #    exact VmHWM, Windows PeakWorkingSetSize, macOS a sampled lower
+  #    bound (no portable VmHWM — printed as such, never claimed exact). ──
+  memory-budget:
+    name: Memory budget 50MP (${{ matrix.os }})
+    needs: rust-gate
+    if: needs.rust-gate.outputs.has_rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Activate pinned toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain
+      - name: Budget test (release, 49.8 MP full film chain + tone → PNG16)
+        run: cargo test --release -p melography-cli --test memory_budget -- --ignored --nocapture
+
+  # ── M4 #25: fuzz battery — short time-boxed bursts per target
+  #    (ARCHITECTURE §9). Ubuntu only (sanitizer availability); a crash
+  #    fails the job and the artifact is uploaded for triage. Seeds are
+  #    copied to a scratch corpus so the committed tree stays pristine. ──
+  fuzz-burst:
+    name: Fuzz bursts (4 targets x 30s)
+    needs: rust-gate
+    if: needs.rust-gate.outputs.has_rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install nightly (cargo-fuzz sanitizer runtime)
+        run: rustup toolchain install nightly --profile minimal
+      - name: Install cargo-fuzz 0.13.0 (pinned, --locked)
+        run: cargo install --locked --version 0.13.0 cargo-fuzz
+      - name: Burst decode_image
+        run: |
+          cp -r fuzz/corpus/decode_image /tmp/corpus-decode
+          cargo +nightly fuzz run decode_image /tmp/corpus-decode --release -- \
+            -max_total_time=30 -rss_limit_mb=2560 -timeout=15
+      - name: Burst cube_parser
+        run: |
+          cp -r fuzz/corpus/cube_parser /tmp/corpus-cube
+          cargo +nightly fuzz run cube_parser /tmp/corpus-cube --release -- \
+            -max_total_time=30 -rss_limit_mb=2560 -timeout=15
+      - name: Burst sidecar_json
+        run: |
+          cp -r fuzz/corpus/sidecar_json /tmp/corpus-sidecar
+          cargo +nightly fuzz run sidecar_json /tmp/corpus-sidecar --release -- \
+            -max_total_time=30 -rss_limit_mb=2560 -timeout=15
+      - name: Burst manifest_json
+        run: |
+          cp -r fuzz/corpus/manifest_json /tmp/corpus-manifest
+          cargo +nightly fuzz run manifest_json /tmp/corpus-manifest --release -- \
+            -max_total_time=30 -rss_limit_mb=2560 -timeout=15
+      - name: Upload crash artifacts (triage only, 14-day retention)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crash-artifacts
+          path: fuzz/artifacts/
+          retention-days: 14
 
   # ── Supply-chain gate (activates at M0 — promised by deny.toml's header) ──
   cargo-deny:

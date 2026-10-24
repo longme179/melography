@@ -1,0 +1,41 @@
+{
+ "id": "third-party-model",
+ "version": "0.1.0",
+ "task": "exposure/white-balance parameter prediction (evaluation plumbing only)",
+ "output_kind": "Parameters",
+ "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+ "size_bytes": 1024,
+ "weights_license": "unknown",
+ "source_url": "https://github.com/longme179/melography",
+ "license_cleared_by_owner": false,
+ "redistributable": true,
+ "upstream": {
+  "repo": "longme179/melography",
+  "uri": "https://github.com/longme179/melography/releases/download/ai/melography-autolight-dummy.onnx",
+  "revision": "generated-by-tools-gen_dummy_onnx"
+ },
+ "runtime": {
+  "opset": 17,
+  "input_shape": "1x3x64x64",
+  "input_encoding": "srgb-display",
+  "preprocess": "area-downscale to 64px, sRGB decode, /255",
+  "output_semantics": "[ev, wb_r, wb_g, wb_b, highlights, shadows]",
+  "output_ranges": "ev [-3,3]; gains [0.5,2]; hl/sh [-100,100]",
+  "quantization": "none",
+  "min_runtime": "ort-2.0.0-rc.15"
+ },
+ "eps": {
+  "tested": [
+   "cpu"
+  ],
+  "optional": []
+ },
+ "measurements": {
+  "linux-x86_64-cpu": {
+   "latency_ms": 1.0,
+   "rss_mb": 12.0,
+   "quality": "plumbing proof, not a shipping candidate"
+  }
+ },
+ "known_issues": []
+}

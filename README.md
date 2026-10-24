@@ -111,6 +111,19 @@ Alternative if you prefer a global CLI (any OS): `cargo install tauri-cli --vers
 
 ### 3. Release build & deploy
 
+One command per platform (distro-aware on Linux — Ubuntu/Debian, Fedora, Arch; see [`docs/BUILDING.md`](docs/BUILDING.md)):
+
+```sh
+scripts/build/build-linux.sh                       # deb + rpm + AppImage
+powershell -ExecutionPolicy Bypass -File scripts\build\build-windows.ps1   # NSIS + MSI
+scripts/build/build-macos.sh                        # .app + .dmg (native)
+scripts/build/build-macos.sh --arch universal       # fat binary
+```
+
+Each script installs the system dependencies it can (needs `sudo` on Linux), builds with the pinned toolchains, and prints the artifacts with sha256 checksums. Plain binaries without an installer: add `--bin-only` (`-BinOnly` on Windows).
+
+Manual equivalent of the binary-only build:
+
 ```sh
 cd apps/melography-app
 npm --prefix ui ci
@@ -119,7 +132,7 @@ PATH="$PWD/ui/node_modules/.bin:$PATH" tauri build --no-bundle
 #         melography-app (macOS)
 ```
 
-- **Installers/bundles (AppImage, `.dmg`, `.exe` setup) are intentionally disabled until milestone M5** (`bundle.active = false` in [`tauri.conf.json`](apps/melography-app/tauri.conf.json)) — see [`docs/RELEASING.md`](docs/RELEASING.md) for the planned artifact matrix, signing layers, and updater channels. `--no-bundle` builds just the executable.
+- **Everything these scripts produce is UNSIGNED and never published** — installer bundles are enabled for local builds (`bundle.active` in [`tauri.conf.json`](apps/melography-app/tauri.conf.json)); signing, notarization, updater manifests and any Release artifact belong to the owner-gated M5 release workflow ([`docs/RELEASING.md`](docs/RELEASING.md)).
 - **Runtime dependencies of the shipped binary**: Linux — `libwebkit2gtk-4.1`, `libgtk-3` (the same runtime set every WebKitGTK app needs; the packages above provide it); Windows — WebView2 Runtime; macOS — none beyond the OS.
 - **Updater/signing**: no update channel exists yet. When it does, artifacts are signed by the owner-held keypair and served exclusively from this repository's GitHub Releases (ADR-0005).
 - **Models**: the app ships with **zero bundled AI models**; optional local models (M3+) are opt-in downloads, checksum-verified, never required (ADR-0004).

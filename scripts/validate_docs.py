@@ -29,7 +29,7 @@ REQUIRED = [
     "AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", ".editorconfig",
     "docs/PLAN.md", "docs/ARCHITECTURE.md", "docs/COLOR_PIPELINE.md",
     "docs/FILM_MODEL.md", "docs/AI_MODELS.md", "docs/UX_SPEC.md",
-    "docs/UX_DESIGN_TOKENS.md", "docs/RELEASING.md",
+    "docs/UX_DESIGN_TOKENS.md", "docs/RELEASING.md", "docs/BUILDING.md",
     "docs/adr/0001-technology-stack.md", "docs/adr/0002-color-management.md",
     "docs/adr/0003-licensing.md", "docs/adr/0004-local-ai.md",
     "docs/adr/0005-packaging-and-updates.md",
@@ -62,6 +62,13 @@ SECRET_PATTERNS = [
 ]
 
 MD_LINK = re.compile(r"\]\(([^)#\s]+\.md)(#[^)\s]*)?\)")
+
+# Files that legitimately contain secret-pattern SHAPE text (the scanners'
+# own pattern sources — shape documentation, never credential material).
+# Every entry is reviewed; the fuller policy scan is scripts/secret_scan.py.
+SECRET_SCAN_ALLOWLIST = {
+    "scripts/secret_scan.py",
+}
 
 failures: list[str] = []
 warnings: list[str] = []
@@ -162,6 +169,8 @@ for rel in tracked_files:
         continue
     for pat in SECRET_PATTERNS:
         if pat.search(text):
+            if rel in SECRET_SCAN_ALLOWLIST:
+                continue  # documented, reviewed self-references
             fail(f"SECRET PATTERN in {rel}: {pat.pattern}")
 
 # Report

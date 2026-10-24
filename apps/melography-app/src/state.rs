@@ -8,13 +8,12 @@ use melography_core::ImageF32;
 use melography_film::profile::StockProfile;
 use melography_film::{Adjustments, LensParams};
 use melography_lut::stage::LutApply;
-use melography_lut::{CubeLut, LutLibrary};
+use melography_lut::LutLibrary;
 use melography_presets::sidecar::{Fingerprint, SidecarV1, StageEntry, SuggestionSource};
-use render::RenderCache;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::cache::{lut_budget_from_total, LutCache, PreviewCacheState};
 use crate::error::AppError;
 use crate::render;
 
@@ -76,15 +75,20 @@ pub struct EditorState {
     pub film: FilmState,
     /// M3 tone stage (issue #13).
     pub tone: ToneState,
-    /// Loaded-and-verified LUTs by content hash (resolution cache).
-    pub luts_loaded: HashMap<String, Arc<CubeLut>>,
+    /// Loaded-and-verified LUTs by content hash — LRU with a byte budget
+    /// (#25; previously an unbounded HashMap). Budget = quarter of
+    /// `Settings.cache_budget_mb`, enforced by eviction.
+    pub luts_loaded: LutCache,
     /// The user's current LUT stack (recipe serialization mirrors this).
     pub lut_stack: Vec<LutApply>,
     pub sidecar: Option<SidecarV1>,
     pub sidecar_path: Option<PathBuf>,
     /// True when the stack changed since the last sidecar save.
     pub dirty: bool,
-    pub preview_cache: Option<RenderCache>,
+    /// Full-res render slot + budget + hit/miss counters (#25; the
+    /// budget comes from `Settings.cache_budget_mb` and is enforced —
+    /// an image larger than the budget is rendered but not retained).
+    pub preview_cache: PreviewCacheState,
     /// Undo stack (pre-mutation snapshots, bounded — see UNDO_LIMIT).
     pub history: Vec<RecipeSnapshot>,
     /// Redo stack (cleared by any new mutation — standard undo semantics).
@@ -107,6 +111,9 @@ impl EditorState {
             eprintln!("melography: {w} — using defaults");
         }
         let recents = crate::recents::Recents::load(&library_root.join("recents.json"));
+        // Cache budgets (#25): preview slot = the setting; LUT LRU = a
+        // quarter share (see cache.rs for the policy + rationale).
+        let total_budget = u64::from(settings.cache_budget_mb) * 1024 * 1024;
         Self {
             session: None,
             library: LutLibrary::open(&library_root),
@@ -114,12 +121,12 @@ impl EditorState {
             stocks_dir: PathBuf::new(),
             film: FilmState::default(),
             tone: ToneState::default(),
-            luts_loaded: HashMap::new(),
+            luts_loaded: LutCache::new(lut_budget_from_total(total_budget)),
             lut_stack: Vec::new(),
             sidecar: None,
             sidecar_path: None,
             dirty: false,
-            preview_cache: None,
+            preview_cache: PreviewCacheState::new(total_budget),
             history: Vec::new(),
             redo: Vec::new(),
             settings,
@@ -252,18 +259,19 @@ impl EditorState {
 
     /// Resolve the stack against the library (hash-verified loads; missing
     /// or corrupted entries surface as explicit errors — never skipped).
+    /// Loaded LUTs land in the budgeted LRU (`cache.rs`, #25).
     pub fn resolve_stack(&mut self) -> Result<Vec<render::ResolvedLut>, AppError> {
         let mut out = Vec::with_capacity(self.lut_stack.len());
         for apply in &self.lut_stack {
             if !apply.enabled {
                 continue;
             }
-            let lut = if let Some(l) = self.luts_loaded.get(&apply.lut_hash) {
-                l.clone()
-            } else {
-                let l = Arc::new(self.library.load(&apply.lut_hash)?);
-                self.luts_loaded.insert(apply.lut_hash.clone(), l.clone());
-                l
+            let lut = match self.luts_loaded.get(&apply.lut_hash) {
+                Some(l) => l,
+                None => {
+                    let l = Arc::new(self.library.load(&apply.lut_hash)?);
+                    self.luts_loaded.insert(apply.lut_hash.clone(), l.clone())
+                }
             };
             out.push(render::ResolvedLut {
                 apply: apply.clone(),

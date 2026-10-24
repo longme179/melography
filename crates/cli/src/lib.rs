@@ -33,6 +33,25 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+/// Chunked file hash — the report used to slurp the whole output file
+/// into memory (`std::fs::read`), a ~100–300 MB avoidable peak on 50 MP
+/// 16-bit exports (#25 memory budget). 1 MiB chunks, same digest.
+fn sha256_file(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).expect("open for hash");
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).expect("read for hash");
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
 pub fn srgb_icc_bytes() -> Vec<u8> {
     mcolor::icc_bytes_deterministic(&mcolor::srgb_profile())
 }
@@ -348,9 +367,35 @@ pub fn cmd_apply(opts: &ApplyOptions) -> serde_json::Value {
         }
     };
 
+    // #25 memory budget: free the decode buffer BEFORE the tone leg.
+    // A 50 MP f32 image is ~600 MB; the old order kept `decoded.pixels`
+    // alive through tone (which allocates a second full-res buffer) —
+    // measured 1.9 GiB peak at 50 MP. Extract the sidecar's facts from
+    // the decode buffer NOW (fingerprint inputs, encoding, dims), drop
+    // it, and only then run tone/render/encode. Gate:
+    // tests/memory_budget.rs; numbers: docs/quality/M4_HARDENING_REPORT.md.
+    let input_dims = [ap1.width(), ap1.height()];
+    let fingerprint = if opts.write_sidecar {
+        let file_bytes = std::fs::read(&opts.input).unwrap_or_default();
+        Some(Fingerprint::compute(&file_bytes, &decoded.pixels))
+    } else {
+        None
+    };
+    let input_encoding_record = match &decoded.encoding {
+        melography_core::ColorEncoding::Icc { profile } => mpresets::InputEncodingRecord::Icc {
+            sha256: sha256_hex(profile),
+        },
+        _ => mpresets::InputEncodingRecord::UntaggedSrgb,
+    };
+    drop(decoded);
+
     // M3 tone stage (scene-referred) — first thing after S1, before LUT/film.
-    let (ap1, tone_report, tone_stage) = match &opts.tone {
-        Some(t) => {
+    // `ap1` is moved INTO the match: each arm owns it, so the pre-tone
+    // buffer is unconditionally freed when the Some arm replaces it. (A
+    // borrow-based match + shadowing left the old buffer alive through
+    // render+encode in practice — +600 MB @ 50 MP; #25.)
+    let (ap1, tone_report, tone_stage) = match (&opts.tone, ap1) {
+        (Some(t), ap1) => {
             let t0 = Instant::now();
             let toned = mcolor::tone::apply(&ap1, t);
             let ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -366,8 +411,11 @@ pub fn cmd_apply(opts: &ApplyOptions) -> serde_json::Value {
                 }),
             )
         }
-        None => (ap1.clone(), serde_json::json!(null), None),
+        (None, ap1) => (ap1, serde_json::json!(null), None),
     };
+    // Post-tone hash (the report hashes the toned AP1; computed here so
+    // the buffer can be dropped/moved below — #25).
+    let ap1_hash = mcolor::hash_image(&ap1);
 
     // Optional LUT: strict-parse the file, import content-addressed, then
     // load it back BY HASH (the library re-verifies the checksum — this is
@@ -424,13 +472,16 @@ pub fn cmd_apply(opts: &ApplyOptions) -> serde_json::Value {
             "apply_ms": lut_ms,
         });
         sidecar_lut_stage = Some(StageEntry::from(&stage));
+        drop(ap1); // #25: free the pre-LUT full-res buffer before film+encode
         out_img
     } else {
-        ap1.clone()
+        ap1 // #25: move — no full-res clone (was ap1.clone())
     };
 
     // Identity film chain (M1; real stages at M2).
     let film_out = FilmChain::new().apply(&working).expect("film chain");
+    let working_hash = mcolor::hash_image(&working);
+    drop(working); // #25: film_out owns the pixels; free the pre-chain buffer
 
     // S5 + encode. Per-format factual capabilities (CP §6): JPEG is 8-bit
     // and gets an ICC APP2; PNG 8/16 + ICC; TIFF 16 (ICC tag write is a
@@ -531,21 +582,14 @@ pub fn cmd_apply(opts: &ApplyOptions) -> serde_json::Value {
     let mut sidecar_sha = serde_json::json!(null);
     let mut sidecar_path = serde_json::json!(null);
     if opts.write_sidecar {
-        let file_bytes = std::fs::read(&opts.input).unwrap_or_default();
-        let fingerprint = Fingerprint::compute(&file_bytes, &decoded.pixels);
         let mut sc = SidecarV1::new(
             opts.input
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            Some(fingerprint),
+            fingerprint, // precomputed at decode time (#25 memory budget)
         );
-        sc.image.input_encoding = match &decoded.encoding {
-            melography_core::ColorEncoding::Icc { profile } => mpresets::InputEncodingRecord::Icc {
-                sha256: sha256_hex(profile),
-            },
-            _ => mpresets::InputEncodingRecord::UntaggedSrgb,
-        };
+        sc.image.input_encoding = input_encoding_record;
         sc.pipeline.stages.push(StageEntry::FilmIdentity {
             enabled: true,
             extra: Default::default(),
@@ -569,7 +613,7 @@ pub fn cmd_apply(opts: &ApplyOptions) -> serde_json::Value {
         "format": format!("{:?}", opts.format),
         "depth": opts.depth,
         "via_lcms": use_lcms,
-        "dims": [decoded.pixels.width(), decoded.pixels.height()],
+        "dims": input_dims,
         "lut": lut_report,
         "tone": tone_report,
         "timings_ms": {
@@ -579,9 +623,9 @@ pub fn cmd_apply(opts: &ApplyOptions) -> serde_json::Value {
             "encode": encode_ms,
         },
         "hashes": {
-            "ap1_f32": mcolor::hash_image(&ap1),
-            "working_f32": mcolor::hash_image(&working),
-            "output_file": sha256_hex(&std::fs::read(&opts.output).expect("read back")),
+            "ap1_f32": ap1_hash,
+            "working_f32": working_hash,
+            "output_file": sha256_file(&opts.output),
             "sidecar_v1": sidecar_sha,
         },
         "sidecar": sidecar_path,
@@ -717,9 +761,32 @@ pub fn cmd_film_apply(opts: &FilmApplyOptions) -> serde_json::Value {
         }
     };
 
+    // #25 memory budget (same ordering as `cmd_apply`): free the decode
+    // buffer BEFORE the tone leg — `decoded.pixels` is a second full-res
+    // f32 image (~600 MB @ 50 MP) that used to stay alive through the
+    // whole render+encode for one fingerprint; the reordering cut the
+    // measured 50 MP peak by ~600 MiB (tests/memory_budget.rs is the gate).
+    let input_dims = [ap1.width(), ap1.height()];
+    let fingerprint = if opts.write_sidecar {
+        let file_bytes = std::fs::read(&opts.input).unwrap_or_default();
+        Some(Fingerprint::compute(&file_bytes, &decoded.pixels))
+    } else {
+        None
+    };
+    let input_encoding_record = match &decoded.encoding {
+        melography_core::ColorEncoding::Icc { profile } => mpresets::InputEncodingRecord::Icc {
+            sha256: sha256_hex(profile),
+        },
+        _ => mpresets::InputEncodingRecord::UntaggedSrgb,
+    };
+    drop(decoded);
+
     // M3 tone stage — scene-referred corrections precede the film chain.
-    let (ap1, tone_report, tone_stage) = match &opts.tone {
-        Some(t) => {
+    // `ap1` is moved INTO the match (see cmd_apply's note: conditional
+    // moves through a borrow kept the pre-tone buffer alive through
+    // render+encode — +600 MB @ 50 MP; #25).
+    let (ap1, tone_report, tone_stage) = match (&opts.tone, ap1) {
+        (Some(t), ap1) => {
             let t0 = Instant::now();
             let toned = mcolor::tone::apply(&ap1, t);
             let ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -735,7 +802,7 @@ pub fn cmd_film_apply(opts: &FilmApplyOptions) -> serde_json::Value {
                 }),
             )
         }
-        None => (ap1, serde_json::json!(null), None),
+        (None, ap1) => (ap1, serde_json::json!(null), None),
     };
 
     let params = match melography_film::chain::FilmChainParams::new(profile.clone())
@@ -758,6 +825,7 @@ pub fn cmd_film_apply(opts: &FilmApplyOptions) -> serde_json::Value {
             return serde_json::json!({"command": "film apply", "error": e.to_string()});
         }
     };
+    drop(ap1); // #25: film_out owns the pixels; free the pre-chain buffer
     let film_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     // S5 + encode (same per-format factual capabilities as `apply`).
@@ -838,21 +906,14 @@ pub fn cmd_film_apply(opts: &FilmApplyOptions) -> serde_json::Value {
     // Sidecar v1 with the film_stock stage (data reference, not a copy).
     let mut sidecar_sha = serde_json::json!(null);
     if opts.write_sidecar {
-        let file_bytes = std::fs::read(&opts.input).unwrap_or_default();
-        let fingerprint = Fingerprint::compute(&file_bytes, &decoded.pixels);
         let mut sc = SidecarV1::new(
             opts.input
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            Some(fingerprint),
+            fingerprint, // precomputed at decode time (#25 memory budget)
         );
-        sc.image.input_encoding = match &decoded.encoding {
-            melography_core::ColorEncoding::Icc { profile } => mpresets::InputEncodingRecord::Icc {
-                sha256: sha256_hex(profile),
-            },
-            _ => mpresets::InputEncodingRecord::UntaggedSrgb,
-        };
+        sc.image.input_encoding = input_encoding_record;
         sc.pipeline.stages.push(StageEntry::FilmStock {
             stock: profile.id.clone(),
             stock_version: profile.profile_version,
@@ -887,6 +948,7 @@ pub fn cmd_film_apply(opts: &FilmApplyOptions) -> serde_json::Value {
             "encode": encode_ms,
             "total": t_total.elapsed().as_secs_f64() * 1000.0,
         },
+        "dims": input_dims,
         "strip_h": opts.strip_h,
         "format": format!("{:?}", opts.format),
         "tone": tone_report,
