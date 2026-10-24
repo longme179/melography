@@ -11,7 +11,7 @@
 //!   CLI's headless pipeline for byte-identical behavior)
 
 use crate::error::AppError;
-use crate::render::{self, PreviewFrame};
+use crate::render;
 use crate::state::EditorState;
 use melography_cli::{ApplyFormat, ApplyOptions};
 use melography_lut::stage::LutApply;
@@ -86,6 +86,7 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
         .filter_map(|s| match s {
             StageEntry::Lut { .. } => <&StageEntry as TryInto<LutApply>>::try_into(s).ok(),
             StageEntry::FilmIdentity { .. } => None,
+            StageEntry::FilmStock { .. } => None,
         })
         .collect();
 
@@ -135,8 +136,14 @@ pub fn render_preview(state: St, max_dim: u32) -> Result<tauri::ipc::Response, A
         .ap1
         .clone();
     let stack = st.resolve_stack()?;
-    let frame: PreviewFrame =
-        render::compose_preview(&base, &mut st.preview_cache, &stack, max_dim)?;
+    let film_leg = st.film_leg();
+    let frame = render::compose_preview(
+        &base,
+        &mut st.preview_cache,
+        &stack,
+        film_leg.as_ref(),
+        max_dim,
+    )?;
     Ok(tauri::ipc::Response::new(frame.to_wire()))
 }
 
@@ -339,10 +346,21 @@ pub fn save_recipe(state: St) -> Result<(), AppError> {
         .take()
         .ok_or_else(|| AppError::new("session.none", "no sidecar to save"))?;
     sc.pipeline.stages.clear();
-    sc.pipeline.stages.push(StageEntry::FilmIdentity {
-        enabled: true,
-        extra: Default::default(),
-    });
+    let film_snapshot = st.film.clone();
+    match &film_snapshot.stock {
+        Some(stock) => sc.pipeline.stages.push(StageEntry::FilmStock {
+            stock: stock.id.clone(),
+            stock_version: stock.profile_version,
+            enabled: film_snapshot.adjustments.enabled,
+            adjustments: film_snapshot.adjustments,
+            lens: film_snapshot.lens,
+            extra: Default::default(),
+        }),
+        None => sc.pipeline.stages.push(StageEntry::FilmIdentity {
+            enabled: true,
+            extra: Default::default(),
+        }),
+    }
     for a in &stack_snapshot {
         sc.pipeline.stages.push(StageEntry::from(a));
     }
@@ -400,7 +418,7 @@ pub fn export_image(
         enabled: first.enabled,
     });
 
-    let mut opts = ApplyOptions::simple(session.source_path.clone(), PathBuf::from(dest));
+    let mut opts = ApplyOptions::simple(session.source_path.clone(), PathBuf::from(&dest));
     opts.format = format;
     opts.depth = args.depth;
     opts.quality = args.quality;
@@ -413,6 +431,32 @@ pub fn export_image(
         opts.insertion = a.insertion;
     }
 
+    // M2: with a stock selected the export runs the full film chain
+    // (CLI user-facing path, same as the preview semantics).
+    if let Some(stock) = st.film.stock.clone() {
+        let mut fopts = melography_cli::FilmApplyOptions {
+            input: session.source_path.clone(),
+            output: PathBuf::from(&dest),
+            stock: stock.id.clone(),
+            profiles_dir: Some(st.stocks_dir.clone()),
+            adjustments: st.film.adjustments.clone(),
+            lens: st.film.lens,
+            format,
+            depth: args.depth,
+            quality: args.quality,
+            strip_h: 512,
+            write_sidecar: false,
+        };
+        fopts.adjustments.enabled = st.film.adjustments.enabled;
+        let report = melography_cli::cmd_film_apply(&fopts);
+        if let Some(err) = report.get("error") {
+            return Err(AppError::new(
+                "export.failed",
+                err.as_str().unwrap_or("export failed").to_string(),
+            ));
+        }
+        return Ok(report);
+    }
     let report = melography_cli::cmd_apply(&opts);
     if let Some(err) = report.get("error") {
         return Err(AppError::new(
@@ -429,4 +473,111 @@ impl EditorState {
         // The LutLibrary was constructed with this root; mirror it.
         self.library.root().to_path_buf()
     }
+
+    /// Build the preview film leg from the current FilmState.
+    pub fn film_leg(&self) -> Option<render::FilmLeg> {
+        let stock = self.film.stock.as_ref()?;
+        if !self.film.adjustments.enabled {
+            return None;
+        }
+        let params = melography_film::chain::FilmChainParams::new(stock.clone())
+            .ok()?
+            .with_adjustments(self.film.adjustments.clone(), self.film.lens)
+            .ok()?;
+        Some(render::FilmLeg {
+            params,
+            key: render::film_leg_key(&stock.id, &self.film.adjustments),
+        })
+    }
+}
+
+// ─── Film Lab (M2, issues #10/#11) ──────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct StockJson {
+    pub id: String,
+    pub display_name: String,
+    pub provenance: String,
+    pub confidence: String,
+    pub polarity: String,
+    pub layers: String,
+    pub default_path: String,
+    /// Honest label per UX_SPEC §5: artist-authored stocks say so
+    /// prominently ("no measured calibration").
+    pub provenance_text: String,
+}
+
+#[tauri::command]
+pub fn list_stocks(state: St) -> Result<Vec<StockJson>, AppError> {
+    let st = state.lock().unwrap();
+    Ok(st
+        .stocks
+        .iter()
+        .map(|p| StockJson {
+            id: p.id.clone(),
+            display_name: p.display_name.clone(),
+            provenance: format!("{:?}", p.provenance),
+            confidence: format!("{:?}", p.confidence),
+            polarity: format!("{:?}", p.polarity),
+            layers: format!("{:?}", p.layers),
+            default_path: format!("{:?}", p.print.default_path),
+            provenance_text: p.provenance_text.clone(),
+        })
+        .collect())
+}
+
+#[derive(Serialize)]
+pub struct FilmStateJson {
+    pub stock: Option<String>,
+    pub enabled: bool,
+    pub adjustments: melography_film::Adjustments,
+}
+
+#[tauri::command]
+pub fn get_film(state: St) -> Result<FilmStateJson, AppError> {
+    let st = state.lock().unwrap();
+    Ok(FilmStateJson {
+        stock: st.film.stock.as_ref().map(|p| p.id.clone()),
+        enabled: st.film.adjustments.enabled,
+        adjustments: st.film.adjustments.clone(),
+    })
+}
+
+#[derive(Deserialize)]
+pub struct SetFilmArgs {
+    /// Stock id; `null` disables the film chain.
+    pub stock: Option<String>,
+    #[serde(default)]
+    pub adjustments: Option<melography_film::Adjustments>,
+}
+
+#[tauri::command]
+pub fn set_film(state: St, args: SetFilmArgs) -> Result<FilmStateJson, AppError> {
+    let mut st = state.lock().unwrap();
+    match &args.stock {
+        None => st.film.stock = None,
+        Some(id) => {
+            let stock = st
+                .stocks
+                .iter()
+                .find(|p| &p.id == id)
+                .cloned()
+                .ok_or_else(|| {
+                    AppError::new("film.unknown_stock", format!("unknown stock {id:?}"))
+                })?;
+            st.film.stock = Some(stock);
+        }
+    }
+    if let Some(adj) = args.adjustments {
+        adj.validate().map_err(|e| {
+            AppError::new("film.invalid_adjustments", e)
+        })?;
+        st.film.adjustments = adj;
+    }
+    st.dirty = true;
+    Ok(FilmStateJson {
+        stock: st.film.stock.as_ref().map(|p| p.id.clone()),
+        enabled: st.film.adjustments.enabled,
+        adjustments: st.film.adjustments.clone(),
+    })
 }

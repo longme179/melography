@@ -1813,6 +1813,7 @@ dependencies = [
  "melography-cli",
  "melography-color",
  "melography-core",
+ "melography-film",
  "melography-io",
  "melography-lut",
  "melography-presets",
@@ -1865,6 +1866,16 @@ name = "melography-film"
 version = "0.0.1"
 dependencies = [
  "melography-core",
+ "melography-gpu",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "melography-gpu"
+version = "0.0.1"
+dependencies = [
+ "melography-core",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -1898,6 +1909,7 @@ name = "melography-presets"
 version = "0.0.1"
 dependencies = [
  "melography-core",
+ "melography-film",
  "melography-lut",
  "serde",
  "serde_json",

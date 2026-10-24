@@ -70,6 +70,8 @@ pub struct FilmPixelGpuParams {
 /// [59..)    hd curves: per layer, n_hd × (x, y, m)
 /// …         paper curves: per layer, n_paper × (x, y, m)
 /// ```
+/// Used by the `wgpu`-gated dispatch in `film_pixel.rs`.
+#[allow(dead_code)]
 pub(crate) fn pack(params: &FilmPixelGpuParams) -> Result<Vec<f32>, String> {
     let n_hd_set: Vec<usize> = params.hd_curves.iter().map(|c| c.xs.len()).collect();
     if n_hd_set.iter().min() != n_hd_set.iter().max() {

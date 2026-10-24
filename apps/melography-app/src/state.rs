@@ -4,6 +4,8 @@
 //! synchronous (async + worker pool arrives with tiled M2 renders).
 
 use melography_core::ImageF32;
+use melography_film::profile::StockProfile;
+use melography_film::{Adjustments, LensParams};
 use melography_lut::stage::LutApply;
 use melography_lut::{CubeLut, LutLibrary};
 use melography_presets::sidecar::{Fingerprint, SidecarV1};
@@ -27,9 +29,34 @@ pub struct OpenSession {
     pub fingerprint: Fingerprint,
 }
 
+/// Film Lab state (M2, issue #10/#11 UX legs): the selected stock (data,
+/// not code — loaded from the shipped registry) + recipe-level knobs.
+/// `None` stock = film chain off (identity), mirroring the CLI default.
+#[derive(Clone)]
+pub struct FilmState {
+    pub stock: Option<StockProfile>,
+    pub adjustments: Adjustments,
+    pub lens: LensParams,
+}
+
+impl Default for FilmState {
+    fn default() -> Self {
+        Self {
+            stock: None,
+            adjustments: Adjustments::default(),
+            lens: LensParams::default(),
+        }
+    }
+}
+
 pub struct EditorState {
     pub session: Option<OpenSession>,
     pub library: LutLibrary,
+    /// Shipped stock registry (loaded once at startup, strict — a broken
+    /// profile file fails app startup loudly, never silently).
+    pub stocks: Vec<StockProfile>,
+    pub stocks_dir: PathBuf,
+    pub film: FilmState,
     /// Loaded-and-verified LUTs by content hash (resolution cache).
     pub luts_loaded: HashMap<String, Arc<CubeLut>>,
     /// The user's current LUT stack (recipe serialization mirrors this).
@@ -46,6 +73,9 @@ impl EditorState {
         Self {
             session: None,
             library: LutLibrary::open(&library_root),
+            stocks: Vec::new(),
+            stocks_dir: PathBuf::new(),
+            film: FilmState::default(),
             luts_loaded: HashMap::new(),
             lut_stack: Vec::new(),
             sidecar: None,
