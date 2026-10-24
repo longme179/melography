@@ -204,8 +204,8 @@ fn diagnose_f32_parity_gap() {
         for s in 0..219 {
             let e = [inputs[s * 3], inputs[s * 3 + 1], inputs[s * 3 + 2]];
             let sim = wgsl_sim(&gpu_params, &e);
-            for c in 0..3 {
-                let d = (f64::from(cpu.data()[s * 3 + c]) - f64::from(sim[c])).abs();
+            for (c, (&cpu_v, &sim_v)) in cpu.data()[s * 3..s * 3 + 3].iter().zip(&sim).enumerate() {
+                let d = (f64::from(cpu_v) - f64::from(sim_v)).abs();
                 if d > worst {
                     worst = d;
                     worst_i = s;
