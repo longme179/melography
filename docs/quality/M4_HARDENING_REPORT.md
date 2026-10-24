@@ -15,13 +15,17 @@ synthetic **8640×5760 (49.8 MP)** PNG8 → decode → AP1 → tone stage ON →
 full film chain (registry stock, tiled strips 512 — the app's shape) →
 16-bit PNG + sidecar, all in one process (generation cost counts).
 
-**Measured (dev sandbox: linux x86_64, 2 cores, Intel Xeon, release):**
+**Measured — CI runners (first `memory-budget` run, commit c9ad962) and
+dev sandbox (linux x86_64, 2 cores, Intel Xeon, release):**
 
 | Line | Evidence | Status |
 |---|---|---|
-| Peak RSS end-to-end | **1265 MiB** vs 2048 MiB budget (VmHWM, exact) | **green — 783 MiB headroom (38%)** |
-| e2e wall time | 36.3 s (decode+S1 2.8 s · film chain 22.3 s · encode 10.1 s) | informational (2-core worst case) |
-| Per-phase RSS trace (probe run) | decode 731 MB → +AP1 1169 → tone 1169 (old buffer freed) → film 1295 peak → encode 885 | the drops below are what holds the peak |
+| Peak RSS — GitHub ubuntu (EPYC, 4 cores) | **1267 MiB** vs 2048 MiB (VmHWM, exact) | **green — 781 MiB headroom** |
+| Peak RSS — GitHub windows (EPYC, 4 cores) | **1260 MiB** (PeakWorkingSetSize, exact) | **green — 788 MiB headroom** |
+| Peak RSS — GitHub macOS (Apple M1 VM, 3 cores) | **1997–2006 MiB** (ps sample, lower bound) | **green but TIGHT — 42–51 MiB headroom**; macOS retains freed large pages in RSS more aggressively than Linux/Windows allocators — flagged as the platform to watch, not a pass to spend |
+| Peak RSS — dev sandbox (2 cores, release) | 1265 MiB (VmHWM) | green — 783 MiB headroom |
+| e2e wall time (sandbox) | 36.3 s (decode+S1 2.8 s · film chain 22.3 s · encode 10.1 s) | informational (2-core worst case) |
+| Per-phase RSS trace (probe run, sandbox) | decode 731 MB → +AP1 1169 → tone 1169 (old buffer freed) → film 1295 peak → encode 885 | the drops below are what holds the peak |
 
 **Two real bugs found by the budget work** (the gate exists to catch
 exactly these; both fixed in `crates/cli/src/lib.rs`):

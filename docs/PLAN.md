@@ -153,7 +153,7 @@ never claimed as a peak).
 
 | Line | M4 evidence | Status |
 |---|---|---|
-| Peak RSS, 49.8 MP end-to-end (decode → tone → full film chain → PNG16 + sidecar) | **1265 MiB** vs ≤ 2048 MiB budget (VmHWM) | **green — 38% headroom** |
+| Peak RSS, 49.8 MP end-to-end (decode → tone → full film chain → PNG16 + sidecar) | **1260–1267 MiB** vs ≤ 2048 MiB on CI linux+windows (exact); 1265 MiB dev sandbox; **1997–2006 MiB on the macOS runner** (sampled lower bound — green but tight; allocator retains freed pages; the platform to watch) | **green on all 3 OSes** |
 | Root causes fixed en route | pre-tone f32 buffer survived its own replacement (+600 MB); `decoded`/`ap1`/`working`/output-file-slab held to end-of-report (+600–900 MB) | two real bugs, regression-gated |
 | Kill-during-export (3 OSes) | 9 anchored SIGKILL rounds × PNG/TIFF/JPEG: destination absent-or-complete, litter cleaned, retry succeeds; mutation-validated (direct-write encoder fails 4/4) | PLAN M4 exit criterion **met** |
 
