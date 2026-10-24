@@ -132,6 +132,10 @@ jobs:
         run: rustup show active-toolchain
       - name: Tests
         run: cargo test --workspace -- --nocapture
+      # M2: heavy film-statistical gates (grain RMS/PSD/zoom) run in
+      # release — megapixel synthetic renders (docs/quality/M2 report §1).
+      - name: Film statistical gates (release)
+        run: cargo test --release -p melography-film --test gates -- --ignored --nocapture
       # GPU reality per OS (measured since the first activated run, 1668e76):
       # macos exposes a Metal adapter ('Apple Paravirtual device'), windows
       # exposes WARP ('Microsoft Basic Render Driver') — both run the REAL

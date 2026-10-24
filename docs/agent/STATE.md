@@ -4,11 +4,14 @@
 
 ## Current milestone
 
-**M1 (LUT workflow MVP)** — **CI GREEN 13/13** on branch
-`agent/m1-lut-workflow` (run 40068658895, commit `1509b0f`), draft
-**PR #19** open awaiting owner review. GPU parity measured on real
-adapters: macos Metal worst |Δ| = 1.19e-7, windows WARP bit-exact.
-PR #18 (M0) merged by owner 2026-10-24T04:22Z.
+**M2 (film lab core)** — complete on branch `agent/m2-film-core`,
+draft PR open (issues #10/#11/#12). §L gates green (heavy gates run in
+release via a CI step); 5 artist-authored stocks ship with schema
+validation; fitting harness live (LM vs CMA-ES recorded); GPU pixel
+kernel + parity gate shipped (spatial-stage kernels = documented M3/M4
+follow-up); preview shortfall honestly documented with a measured cause
++ fast-path plan (docs/quality/M2_FILM_QUALITY_REPORT.md).
+PR #19 (M1) merged by owner at 78c0249 (2026-10-24T06:16Z).
 
 ## Branch / PR / HEAD
 

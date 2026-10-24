@@ -1139,6 +1139,7 @@ version = "0.0.1"
 dependencies = [
  "melography-core",
  "melography-gpu",
+ "melography-presets",
  "serde",
  "serde_json",
  "sha2",
