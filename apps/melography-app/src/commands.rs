@@ -569,9 +569,8 @@ pub fn set_film(state: St, args: SetFilmArgs) -> Result<FilmStateJson, AppError>
         }
     }
     if let Some(adj) = args.adjustments {
-        adj.validate().map_err(|e| {
-            AppError::new("film.invalid_adjustments", e)
-        })?;
+        adj.validate()
+            .map_err(|e| AppError::new("film.invalid_adjustments", e))?;
         st.film.adjustments = adj;
     }
     st.dirty = true;

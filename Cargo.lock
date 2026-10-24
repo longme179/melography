@@ -1156,6 +1156,7 @@ dependencies = [
  "melography-gpu",
  "melography-lut",
  "melography-presets",
+ "naga",
  "pollster",
  "serde",
  "serde_json",

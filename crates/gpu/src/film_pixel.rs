@@ -70,6 +70,11 @@ fn splineEval(base: u32, n: u32, x: f32) -> f32 {
          + (t3 - t2) * h * mb;
 }
 
+// WGSL has no log10 builtin — log10(x) = log2(x) * log10(2).
+fn log10f(x: f32) -> f32 {
+    return log2(x) * 0.30102999566398119521;
+}
+
 fn mat3Apply(m: u32, v: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(
         params[m] * v.x + params[m+1u] * v.y + params[m+2u] * v.z,
@@ -104,7 +109,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var li = 0u; li < layers; li = li + 1u) {
         let base = hdBase(li);
         let n = nHd();
-        let log_e = log10(max(x[li], params[3]));
+        let log_e = log10f(max(x[li], params[3]));
         let f = splineEval(base, n, log_e);
         let xm0 = params[base];
         let xm1 = params[base + (n - 1u) * 3u];
@@ -158,12 +163,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (p == 0u) {
                 // Paper path.
                 let x_p = params[11] * t;
-                let d_p = splineEval(ppBase(li), nPp(), log10(max(x_p, 1e-12)));
+                let d_p = splineEval(ppBase(li), nPp(), log10f(max(x_p, 1e-12)));
                 lin[li] = pow(10.0, params[12] - d_p);
             } else if (p == 1u) {
                 // Scanner path: log window + gamma + matrix + positive map.
                 let x_p = params[11] * t + params[16];
-                let y = clamp((log10(max(x_p, 1e-12)) - params[13])
+                let y = clamp((log10f(max(x_p, 1e-12)) - params[13])
                               / (params[14] - params[13]), 0.0, 1.0);
                 let z = pow(y, 1.0 / params[15]);
                 let sm = mat3Apply(50u, vec3<f32>(z));
@@ -302,4 +307,23 @@ pub fn run_film_pixel(params: &FilmPixelGpuParams, inputs: &[f32]) -> Result<Vec
     };
     out_readback.unmap();
     Ok(floats)
+}
+
+#[cfg(all(test, feature = "wgpu"))]
+mod shader_parse {
+    /// Offline WGSL validation via naga — catches syntax/builtin errors
+    /// WITHOUT an adapter (the `log10` lesson, CI run 40075333761: the
+    /// sandbox cannot run the parity gate, but it can always parse).
+    #[test]
+    fn film_pixel_shader_parses_and_validates_in_naga() {
+        let module = naga::front::wgsl::parse_str(super::FILM_PIXEL_SHADER)
+            .expect("film_pixel WGSL must parse in naga");
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        );
+        validator
+            .validate(&module)
+            .expect("film_pixel WGSL must validate in naga (baseline capabilities)");
+    }
 }

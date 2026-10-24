@@ -255,10 +255,9 @@ fn render_pipeline(
         base.clone()
     };
     if let Some(f) = film {
-        img = film_chain::render(&img, &f.params)
-            .map_err(|e| LutError::Malformed {
-                detail: format!("film chain: {e}"),
-            })?;
+        img = film_chain::render(&img, &f.params).map_err(|e| LutError::Malformed {
+            detail: format!("film chain: {e}"),
+        })?;
     }
     // LUT stack (full-res path unchanged when no film leg is active).
     if film.is_some() {

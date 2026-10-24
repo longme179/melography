@@ -31,6 +31,7 @@ wgpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 [dev-dependencies]
 melography-film = { workspace = true }
 melography-presets = { workspace = true }
+naga = "30" 
 serde_json = { workspace = true }
 melography-lut = { workspace = true }
 # Self dev-dependency: turns the `wgpu` feature on for this crate's OWN
