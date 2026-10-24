@@ -12,6 +12,8 @@ export const state = writable<AppState>({
   sidecarPath: null,
   lastClampedPixels: 0,
   libraryCount: 0,
+  canUndo: false,
+  canRedo: false,
 });
 
 /** Latest error surfaced to the banner (UX_SPEC §9: message + cause + next action). */

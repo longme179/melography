@@ -126,30 +126,19 @@ pub fn from_json(json: &str) -> Result<RecipeV0, RecipeError> {
     Ok(recipe)
 }
 
-/// Atomic write: temp file in the same directory, fsync, rename over the
-/// target (ARCHITECTURE §7 atomic-writes rule).
+/// Atomic durable write, delegated to the shared primitive
+/// (`melography_core::durable`): temp sibling → write-handle `sync_all` →
+/// drop → rename → POSIX dir-fsync (ARCHITECTURE §7 atomic-writes rule).
+///
+/// Historical note: the previous local implementation opened the temp
+/// file READ-ONLY for its fsync — on Windows `FlushFileBuffers` requires
+/// write access and fails with `ERROR_ACCESS_DENIED`, a failure the old
+/// code silently ignored, so Windows saves shipped without any real
+/// sync. The shared primitive syncs on the write-mode handle (the exact
+/// bug class that failed windows-latest CI on the M3 manager).
 pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), RecipeError> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| RecipeError::Io("target has no parent directory".into()))?;
-    let tmp = dir.join(format!(
-        ".{}.tmp-{}",
-        path.file_name()
-            .and_then(std::ffi::OsStr::to_str)
-            .unwrap_or("recipe"),
-        std::process::id()
-    ));
-    std::fs::write(&tmp, contents).map_err(|e| RecipeError::Io(format!("write: {e}")))?;
-    // fsync the temp file before rename so the rename never publishes a
-    // partially-flushed file.
-    if let Ok(f) = std::fs::File::open(&tmp) {
-        let _ = f.sync_all();
-    }
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        RecipeError::Io(format!("rename: {e}"))
-    })?;
-    Ok(())
+    melography_core::durable::atomic_write_durable(path, contents)
+        .map_err(|e| RecipeError::Io(format!("atomic write {}: {e}", path.display())))
 }
 
 #[cfg(test)]

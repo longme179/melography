@@ -184,8 +184,12 @@ impl ModelManager {
             }
         }
         // Clean tmp litter (crashed installs) recursively — best effort,
-        // never fatal.
+        // never fatal. Two naming generations: the shared primitive's
+        // `.{file}.tmp-{pid}-{nanos}` siblings (current) and the legacy
+        // M3-era `.tmp-<rand>` / `tmp` entries (dir or file).
         fn clean_litter(dir: &Path) {
+            let _ = melography_core::durable::clean_stale_tmp(&dir.join("model.onnx"));
+            let _ = melography_core::durable::clean_stale_tmp(&dir.join("manifest.json"));
             let Ok(entries) = std::fs::read_dir(dir) else {
                 return;
             };
@@ -419,61 +423,23 @@ fn verify_layout(dir: &Path, m: &ModelManifest) -> ModelState {
     }
 }
 
-/// Durable atomic install (the M2 LUT pattern): tmp file → sync → rename;
-/// the manifest.json commit marker is written last, also atomically.
+/// Durable atomic install, delegated to the shared primitive
+/// (`melography_core::durable`): pid+nanos-unique tmp names, write-handle
+/// fsync (the Windows `FlushFileBuffers` requirement), drop-before-rename,
+/// POSIX dir-fsync after each rename. The manifest.json commit marker is
+/// written last — a model dir without it is not a model.
 fn atomic_install(root: &Path, m: &ModelManifest, bytes: &[u8]) -> Result<(), std::io::Error> {
     let dir = model_dir(root, &m.id, &m.version.to_string());
     std::fs::create_dir_all(&dir)?;
-    let tmp_suffix = format!(
-        ".tmp-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    );
-    // Weights + manifest share the M2 LUT durable-write pattern.
-    let w_tmp = dir.join(format!("model.onnx{tmp_suffix}"));
-    atomic_write_durable(&w_tmp, bytes, &dir.join("model.onnx"))?;
+    // Weights.
+    melography_core::durable::atomic_write_durable(&dir.join("model.onnx"), bytes)?;
     // Manifest (commit marker) — canonical JSON, written last.
     let manifest_json = serde_json::to_string_pretty(m)
         .map_err(|e| std::io::Error::other(format!("manifest serialize: {e}")))?;
-    let m_tmp = dir.join(format!("manifest.json{tmp_suffix}"));
-    atomic_write_durable(&m_tmp, manifest_json.as_bytes(), &dir.join("manifest.json"))?;
-    sync_dir(&dir)?;
-    Ok(())
-}
-
-/// Create→write→`sync_all`→drop→rename, the pattern the M2 LUT library
-/// (crates/lut/src/library.rs) proved green on windows-latest. The sync
-/// MUST run on the write-mode handle itself: `File::open` (read-only) +
-/// `sync_all` maps to `FlushFileBuffers`, which requires write access on
-/// Windows and fails with ERROR_ACCESS_DENIED — the PR #22 windows-latest
-/// failure. Dropping the handle before the rename avoids the Windows
-/// sharing-violation trap on still-open files.
-fn atomic_write_durable(tmp: &Path, bytes: &[u8], dest: &Path) -> Result<(), std::io::Error> {
-    use std::io::Write;
-    let mut f = std::fs::File::create(tmp)?;
-    f.write_all(bytes)?;
-    f.sync_all()?;
-    drop(f);
-    std::fs::rename(tmp, dest)
-}
-
-/// Directory fsync — makes the *rename itself* durable on POSIX (the
-/// directory entry is separate metadata from the file data). On Windows
-/// `std::fs::File::open` cannot open a directory at all (`CreateFileW`
-/// needs `FILE_FLAG_BACKUP_SEMANTICS`, which std does not pass →
-/// ERROR_ACCESS_DENIED), and NTFS journals the metadata ordering itself,
-/// so this is an honest no-op there — the same durability model the M2
-/// LUT library ships (its atomic writes never fsync the directory and
-/// have been windows-latest-green since M2).
-#[cfg(not(windows))]
-fn sync_dir(path: &Path) -> Result<(), std::io::Error> {
-    std::fs::File::open(path)?.sync_all()
-}
-
-#[cfg(windows)]
-fn sync_dir(_path: &Path) -> Result<(), std::io::Error> {
+    melography_core::durable::atomic_write_durable(
+        &dir.join("manifest.json"),
+        manifest_json.as_bytes(),
+    )?;
     Ok(())
 }
 
@@ -539,7 +505,7 @@ mod tests {
         let litter = std::fs::read_dir(&mdir)
             .unwrap()
             .filter_map(Result::ok)
-            .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp-"));
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"));
         assert_eq!(litter.count(), 0);
 
         // Delete removes everything immediately.
@@ -662,13 +628,25 @@ mod tests {
         let id_dir = root.path().join("some-model");
         let v_dir = id_dir.join("0.1.0");
         std::fs::create_dir_all(&v_dir).unwrap();
+        // Legacy M3-era litter.
         std::fs::write(v_dir.join(".tmp-123"), b"partial").unwrap();
         std::fs::create_dir_all(id_dir.join("tmp")).unwrap();
+        // Shared-primitive litter (current naming).
+        std::fs::write(v_dir.join(".model.onnx.tmp-1-2"), b"partial").unwrap();
+        std::fs::write(v_dir.join(".manifest.json.tmp-3-4"), b"partial").unwrap();
 
         let mgr = ModelManager::open(root.path());
         assert!(mgr.list().is_empty(), "tmp dir is not a model");
         assert!(!id_dir.join("tmp").exists(), "litter cleaned");
-        assert!(!v_dir.join(".tmp-123").exists(), "litter cleaned");
+        assert!(!v_dir.join(".tmp-123").exists(), "legacy litter cleaned");
+        assert!(
+            !v_dir.join(".model.onnx.tmp-1-2").exists(),
+            "weights litter cleaned"
+        );
+        assert!(
+            !v_dir.join(".manifest.json.tmp-3-4").exists(),
+            "manifest litter cleaned"
+        );
     }
 
     #[test]

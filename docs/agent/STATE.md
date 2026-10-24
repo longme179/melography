@@ -1,22 +1,24 @@
 # MELOGRAPHY — Agent State
 
-**Updated:** 2026-10-24T09:30Z (end of M3 session 05) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
+**Updated:** 2026-10-24 (M4 session 06, in flight) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
 
 ## Current milestone
 
-**M3 (AI assistance)** — complete on branch `agent/m3-ai-assist`,
-draft PR open (issues #13/#14). Tone stage + non-ML baseline + model
-manager + manifest gate v2 + ONNX eval harness shipped; baseline-only v1
-(no model passed the gate — ADR-0004 §7 honest outcome); benchmark
-0.205 vs naive 1.019 CI-enforced as the bar; budgets 49–61× under.
-Also on the branch: the owner-requested README build/deploy guide
-(PR #21 merged first — check its state before merging this branch).
+**M4 (UX polish & hardening)** — in progress on branch
+`agent/m4-ux-hardening` (issues #23 screens · #24 session model ·
+#25 hardening · #15 i18n/a11y). Session-06 slice landed on the branch:
+shared durable-write primitive (`core::durable`) + SIGKILL crash
+battery, undo/redo + autosave + sidecar litter recovery. M3 was merged
+by the owner (PR #22 @ cc2ec8a; issues #13/#14 closed completed) after
+the windows-latest + ai-onnx CI failures were root-caused and fixed
+(Windows FlushFileBuffers/dir-open traps; gitignored CC0 fixture) and a
+macOS µs-clock temp-dir collision flake was killed repo-wide.
 
 ## Branch / PR / HEAD
 
-- Working branch: `agent/m3-ai-assist` (based on `agent/readme-build-docs`)
-- PR #21 (README build/deploy + LICENSE): open/merged — **verify before M3 merge**
-- M3 PR: open on push (see session log 05)
+- Working branch: `agent/m4-ux-hardening` (based on main @ cc2ec8a)
+- M3: **merged** (PR #22); issues #13/#14 closed completed
+- M4 draft PR: opened on push (see session log 06)
 - Issue permissions: PAT has them; branch protection on `main` =
   owner-side (unchanged).
 

@@ -14,6 +14,11 @@
 
 use std::fmt;
 
+// ─── Durable atomic writes ──────────────────────────────────────────────────
+// The single persistence primitive shared by every MELOGRAPHY save path
+// (LUT library, model manager, recipe sidecars, session autosave).
+pub mod durable;
+
 // ─── Image buffers ──────────────────────────────────────────────────────────
 
 /// Channel count of an image buffer.

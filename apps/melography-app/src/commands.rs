@@ -73,6 +73,11 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
 
     // Existing sidecar next to the original? (non-destructive resume)
     let sidecar_path = path.with_extension("melography.json");
+    // Crash-safety recovery (M4 session model, issue #24): a killed save
+    // can leave `.{name}.melography.json.tmp-*` litter — clean it before
+    // any new save can collide; never fatal (a wedged temp file must not
+    // block opening the image).
+    let _litter = melography_core::durable::clean_stale_tmp(&sidecar_path);
     let (sidecar, sidecar_loaded) = if sidecar_path.exists() {
         let sc = SidecarV1::load(&sidecar_path)?;
         (sc, true)
@@ -126,6 +131,7 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
     st.sidecar_path = Some(sidecar_path);
     st.dirty = false;
     st.preview_cache = None;
+    st.reset_history(); // history belongs to this image's session (M4 #24)
 
     Ok(ImageInfo {
         name,
@@ -145,6 +151,7 @@ pub fn close_image(state: St) {
     st.lut_stack.clear();
     st.preview_cache = None;
     st.dirty = false;
+    st.reset_history(); // no session → no history (M4 #24)
 }
 
 // ─── preview transport ──────────────────────────────────────────────────────
@@ -290,6 +297,9 @@ pub struct StateJson {
     /// Aggregate clamped-pixel count from the last render (badge input).
     pub last_clamped_pixels: u64,
     pub library_count: usize,
+    /// Undo availability (M4 #24 — toolbar + keyboard state).
+    pub can_undo: bool,
+    pub can_redo: bool,
 }
 
 #[derive(Serialize)]
@@ -319,6 +329,7 @@ pub fn set_lut_stack(state: St, stack: Vec<LutStackEntry>) -> Result<(), AppErro
             enabled: e.enabled,
         });
     }
+    st.push_history(); // recipe mutation → undo-able (M4 #24)
     st.lut_stack = parsed;
     st.dirty = true; // cache key changes → next render recomputes
     Ok(())
@@ -327,12 +338,18 @@ pub fn set_lut_stack(state: St, stack: Vec<LutStackEntry>) -> Result<(), AppErro
 #[tauri::command]
 pub fn get_state(state: St) -> Result<StateJson, AppError> {
     let st = state.lock().unwrap();
+    Ok(state_json(&st))
+}
+
+/// Snapshot of editor state for the UI (shared by get_state/undo/redo so
+/// every path returns the same shape).
+fn state_json(st: &crate::state::EditorState) -> StateJson {
     let last_clamped = st
         .preview_cache
         .as_ref()
         .map(|c| c.clamped_pixels)
         .unwrap_or(0);
-    Ok(StateJson {
+    StateJson {
         image_open: st.session.is_some(),
         image_name: st.session.as_ref().map(|s| s.original_name.clone()),
         image_dims: st.session.as_ref().map(|s| [s.width, s.height]),
@@ -352,7 +369,38 @@ pub fn get_state(state: St) -> Result<StateJson, AppError> {
         sidecar_path: st.sidecar_path.as_ref().map(|p| p.display().to_string()),
         last_clamped_pixels: last_clamped,
         library_count: st.library.list().map(|l| l.len()).unwrap_or(0),
-    })
+        can_undo: !st.history.is_empty(),
+        can_redo: !st.redo.is_empty(),
+    }
+}
+
+/// Undo the last recipe mutation (UX_SPEC §4 History, M4 issue #24).
+/// Ctrl+Z — returns the refreshed state; an empty stack is an explicit
+/// error (the UI keeps its buttons disabled, so this is a contract
+/// violation, not a normal flow).
+#[tauri::command]
+pub fn undo(state: St) -> Result<StateJson, AppError> {
+    let mut st = state.lock().unwrap();
+    let Some(prev) = st.history.pop() else {
+        return Err(AppError::new("session.history", "nothing to undo"));
+    };
+    let current = st.snapshot();
+    st.redo.push(current);
+    st.restore(prev);
+    Ok(state_json(&st))
+}
+
+/// Redo the last undone mutation (Ctrl+Shift+Z / Ctrl+Y).
+#[tauri::command]
+pub fn redo(state: St) -> Result<StateJson, AppError> {
+    let mut st = state.lock().unwrap();
+    let Some(next) = st.redo.pop() else {
+        return Err(AppError::new("session.history", "nothing to redo"));
+    };
+    let current = st.snapshot();
+    st.history.push(current);
+    st.restore(next);
+    Ok(state_json(&st))
 }
 
 // ─── persistence + export ───────────────────────────────────────────────────
@@ -590,6 +638,7 @@ pub struct SetFilmArgs {
 #[tauri::command]
 pub fn set_film(state: St, args: SetFilmArgs) -> Result<FilmStateJson, AppError> {
     let mut st = state.lock().unwrap();
+    st.push_history(); // recipe mutation → undo-able (M4 #24)
     match &args.stock {
         None => st.film.stock = None,
         Some(id) => {
@@ -647,6 +696,7 @@ pub struct SetToneArgs {
 #[tauri::command]
 pub fn set_tone(state: St, args: SetToneArgs) -> Result<ToneStateJson, AppError> {
     let mut st = state.lock().unwrap();
+    st.push_history(); // recipe mutation → undo-able (M4 #24)
     let params = args.params.map(|p| p.sanitized());
     st.tone = crate::state::ToneState {
         params,

@@ -14,3 +14,6 @@ serde = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+# Unique panic-safe temp dirs for the durable-write tests (repo-wide
+# convention — see crates/lut/Cargo.toml for the flake this prevents).
+tempfile = "3"
