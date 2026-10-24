@@ -43,10 +43,11 @@ impl From<melography_lut::LutError> for AppError {
     fn from(e: melography_lut::LutError) -> Self {
         use melography_lut::LutError as E;
         match e {
-            E::Missing { hash } => {
-                AppError::new("lut.missing", format!("LUT {hash} is missing from the library"))
-                    .with_context(hash)
-            }
+            E::Missing { hash } => AppError::new(
+                "lut.missing",
+                format!("LUT {hash} is missing from the library"),
+            )
+            .with_context(hash),
             E::ChecksumMismatch { hash } => AppError::new(
                 "lut.checksum",
                 format!("LUT {hash} failed its integrity check"),
@@ -67,11 +68,9 @@ impl From<melography_lut::LutError> for AppError {
             E::Malformed { detail } => {
                 AppError::new("lut.malformed", format!("malformed LUT: {detail}"))
             }
-            E::MalformedFile { path, source } => AppError::new(
-                "lut.malformed",
-                format!("{}: {source}", path),
-            )
-            .with_context(path),
+            E::MalformedFile { path, source } => {
+                AppError::new("lut.malformed", format!("{}: {source}", path)).with_context(path)
+            }
             E::Unsupported(detail) => {
                 AppError::new("lut.unsupported", format!("unsupported LUT: {detail}"))
             }
@@ -85,6 +84,13 @@ impl From<melography_lut::LutError> for AppError {
 impl From<melography_lut::LibraryError> for AppError {
     fn from(e: melography_lut::LibraryError) -> Self {
         melography_lut::LutError::from(e).into()
+    }
+}
+
+/// Invalid command arguments (fixed-vocabulary strings from the UI).
+impl From<String> for AppError {
+    fn from(message: String) -> Self {
+        AppError::new("param.invalid", message)
     }
 }
 
@@ -121,10 +127,7 @@ mod tests {
 
     #[test]
     fn lut_errors_map_to_stable_codes() {
-        let e: AppError = melography_lut::LutError::Missing {
-            hash: "abc".into(),
-        }
-        .into();
+        let e: AppError = melography_lut::LutError::Missing { hash: "abc".into() }.into();
         assert_eq!(e.code, "lut.missing");
         assert_eq!(e.context.as_deref(), Some("abc"));
         let e: AppError = melography_lut::LutError::EncodingNotImplemented("agx-log").into();

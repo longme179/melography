@@ -28,8 +28,7 @@ fn identity_cube(n: u32) -> String {
 }
 
 fn warm_gradient_image(w: u32, h: u32) -> melography_core::ImageF32 {
-    let mut img =
-        melography_core::ImageF32::alloc(w, h, melography_core::Channels::Rgb, 0.0);
+    let mut img = melography_core::ImageF32::alloc(w, h, melography_core::Channels::Rgb, 0.0);
     for y in 0..h {
         for x in 0..w {
             let px = img.pixel_mut(x, y);
@@ -55,7 +54,9 @@ fn session_library_preview_flow() {
     // "Open" a session: decode-free construction of the same state the
     // command layer builds (AP1 base + fingerprint).
     let ap1 = warm_gradient_image(96, 64);
-    let fingerprint = Fingerprint::compute(b"fake-original-bytes", &ap1);
+    // Fingerprint computed exactly as open_image does (kept to mirror the
+    // command flow; the session field itself is exercised via sidecars).
+    let _fingerprint = Fingerprint::compute(b"fake-original-bytes", &ap1);
 
     // Import a LUT through the real library.
     let lut_path = dir.join("look.cube");

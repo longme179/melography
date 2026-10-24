@@ -14,15 +14,17 @@ use crate::error::AppError;
 use crate::render::{self, PreviewFrame};
 use crate::state::EditorState;
 use melography_cli::{ApplyFormat, ApplyOptions};
-use melography_lut::stage::{InsertionPoint, LutApply};
-use melography_lut::{CubeKind, LutEncoding, LutRecord};
+use melography_lut::stage::LutApply;
+use melography_lut::{LutEncoding, LutRecord};
 use melography_presets::sidecar::{Fingerprint, SidecarV1, StageEntry};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
 
-type St = State<'_, Mutex<EditorState>>;
+/// Inline in every command signature (type aliases cannot carry the
+/// anonymous lifetime through tauri's macro expansion).
+type St<'a> = State<'a, Mutex<EditorState>>;
 
 // ─── session ────────────────────────────────────────────────────────────────
 
@@ -44,15 +46,14 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
 
     let decoded = melography_io::decode::decode_file(&path)?;
     let encoding = match &decoded.encoding {
-        melography_core::ColorEncoding::Icc { profile } => {
-            melography_core::ColorEncoding::Icc { profile: profile.clone() }
-        }
+        melography_core::ColorEncoding::Icc { profile } => melography_core::ColorEncoding::Icc {
+            profile: profile.clone(),
+        },
         _ => melography_core::ColorEncoding::Srgb { linear: false },
     };
     let fastpath = matches!(
         decoded.encoding,
-        melography_core::ColorEncoding::Srgb { .. }
-            | melography_core::ColorEncoding::Untagged
+        melography_core::ColorEncoding::Srgb { .. } | melography_core::ColorEncoding::Untagged
     );
     let ap1 = if fastpath {
         melography_color::srgb_to_ap1_fast(&decoded.pixels)
@@ -127,13 +128,15 @@ pub fn close_image(state: St) {
 #[tauri::command]
 pub fn render_preview(state: St, max_dim: u32) -> Result<tauri::ipc::Response, AppError> {
     let mut st = state.lock().unwrap();
-    let session = st
+    let base = st
         .session
         .as_ref()
-        .ok_or_else(|| AppError::new("session.none", "no image is open"))?;
+        .ok_or_else(|| AppError::new("session.none", "no image is open"))?
+        .ap1
+        .clone();
     let stack = st.resolve_stack()?;
     let frame: PreviewFrame =
-        render::compose_preview(&session.ap1, &mut st.preview_cache, &stack, max_dim)?;
+        render::compose_preview(&base, &mut st.preview_cache, &stack, max_dim)?;
     Ok(tauri::ipc::Response::new(frame.to_wire()))
 }
 
@@ -205,7 +208,7 @@ pub fn import_lut(state: St, args: ImportLutArgs) -> Result<LutRecordJson, AppEr
     let declared_output = LutEncoding::from_str_fixed(&args.declared_output)?;
     let st = state.lock().unwrap();
     let record = st.library.import(
-        PathBuf::from(&args.path),
+        std::path::Path::new(&args.path),
         declared_input,
         declared_output,
         melography_lut::ImportProvenance {
@@ -300,10 +303,7 @@ pub fn get_state(state: St) -> Result<StateJson, AppError> {
     Ok(StateJson {
         image_open: st.session.is_some(),
         image_name: st.session.as_ref().map(|s| s.original_name.clone()),
-        image_dims: st
-            .session
-            .as_ref()
-            .map(|s| [s.width, s.height]),
+        image_dims: st.session.as_ref().map(|s| [s.width, s.height]),
         lut_stack: st
             .lut_stack
             .iter()
@@ -317,10 +317,7 @@ pub fn get_state(state: St) -> Result<StateJson, AppError> {
             })
             .collect(),
         dirty: st.dirty,
-        sidecar_path: st
-            .sidecar_path
-            .as_ref()
-            .map(|p| p.display().to_string()),
+        sidecar_path: st.sidecar_path.as_ref().map(|p| p.display().to_string()),
         last_clamped_pixels: last_clamped,
         library_count: st.library.list().map(|l| l.len()).unwrap_or(0),
     })
@@ -334,22 +331,26 @@ pub fn save_recipe(state: St) -> Result<(), AppError> {
     let Some(path) = st.sidecar_path.clone() else {
         return Err(AppError::new("session.none", "no sidecar to save"));
     };
-    let Some(sc) = st.sidecar.as_mut() else {
-        return Err(AppError::new("session.none", "no sidecar to save"));
-    };
-    // Rebuild the pipeline block from the live stack (+ identity film).
+    // Take the sidecar out of the state while rebuilding its pipeline
+    // block from the live stack (+ identity film) — single-owner writes.
+    let stack_snapshot = st.lut_stack.clone();
+    let mut sc = st
+        .sidecar
+        .take()
+        .ok_or_else(|| AppError::new("session.none", "no sidecar to save"))?;
     sc.pipeline.stages.clear();
     sc.pipeline.stages.push(StageEntry::FilmIdentity {
         enabled: true,
         extra: Default::default(),
     });
-    for a in &st.lut_stack {
+    for a in &stack_snapshot {
         sc.pipeline.stages.push(StageEntry::from(a));
     }
     sc.touch();
-    sc.save(&path)?;
+    let save_result = sc.save(&path);
+    st.sidecar = Some(sc);
     st.dirty = false;
-    Ok(())
+    save_result.map_err(AppError::from)
 }
 
 #[derive(Deserialize)]
@@ -360,7 +361,11 @@ pub struct ExportArgs {
 }
 
 #[tauri::command]
-pub fn export_image(state: St, args: ExportArgs, dest: String) -> Result<serde_json::Value, AppError> {
+pub fn export_image(
+    state: St,
+    args: ExportArgs,
+    dest: String,
+) -> Result<serde_json::Value, AppError> {
     let st = state.lock().unwrap();
     let Some(session) = st.session.as_ref() else {
         return Err(AppError::new("session.none", "no image is open"));
@@ -386,17 +391,14 @@ pub fn export_image(state: St, args: ExportArgs, dest: String) -> Result<serde_j
     } else {
         None
     };
-    let apply = st
-        .lut_stack
-        .first()
-        .map(|first| LutApply {
-            lut_hash: first.lut_hash.clone(),
-            insertion: first.insertion,
-            intensity: first.intensity,
-            declared_input: first.declared_input,
-            declared_output: first.declared_output,
-            enabled: first.enabled,
-        });
+    let apply = st.lut_stack.first().map(|first| LutApply {
+        lut_hash: first.lut_hash.clone(),
+        insertion: first.insertion,
+        intensity: first.intensity,
+        declared_input: first.declared_input,
+        declared_output: first.declared_output,
+        enabled: first.enabled,
+    });
 
     let mut opts = ApplyOptions::simple(session.source_path.clone(), PathBuf::from(dest));
     opts.format = format;
@@ -425,8 +427,6 @@ pub fn export_image(state: St, args: ExportArgs, dest: String) -> Result<serde_j
 impl EditorState {
     pub fn library_root(&self) -> PathBuf {
         // The LutLibrary was constructed with this root; mirror it.
-        self.library
-            .root()
-            .to_path_buf()
+        self.library.root().to_path_buf()
     }
 }

@@ -12,10 +12,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub mod error;
-pub mod render;
-
-pub use error::AppError;
+use crate::error::AppError;
+use crate::render;
 
 /// Everything about the currently open original (immutable source — the
 /// non-destructive contract: the file is never written to).
@@ -69,8 +67,7 @@ impl EditorState {
                 l.clone()
             } else {
                 let l = Arc::new(self.library.load(&apply.lut_hash)?);
-                self.luts_loaded
-                    .insert(apply.lut_hash.clone(), l.clone());
+                self.luts_loaded.insert(apply.lut_hash.clone(), l.clone());
                 l
             };
             out.push(render::ResolvedLut {

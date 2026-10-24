@@ -16,7 +16,7 @@
 
 use melography_color as mcolor;
 use melography_core::{Channels, ImageF32};
-use melography_lut::stage::{ApplyReport, InsertionPoint, LutApply};
+use melography_lut::stage::{InsertionPoint, LutApply};
 use melography_lut::{CubeLut, LutError};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -58,6 +58,7 @@ impl PreviewFrame {
 
 /// One resolved LUT stack entry (stage params + the loaded, hash-verified
 /// LUT — resolution happens once at stack mutation, not per frame).
+#[derive(Debug)]
 pub struct ResolvedLut {
     pub apply: LutApply,
     pub lut: Arc<CubeLut>,
@@ -92,10 +93,7 @@ pub fn stack_key(base: &ImageF32, stack: &[ResolvedLut]) -> u64 {
 
 /// Apply the LUT stack at full resolution (identity chain around it is
 /// implied — M1 film chain is identity; M2 inserts real stages here).
-pub fn render_full(
-    base: &ImageF32,
-    stack: &[ResolvedLut],
-) -> Result<(ImageF32, u64), LutError> {
+pub fn render_full(base: &ImageF32, stack: &[ResolvedLut]) -> Result<(ImageF32, u64), LutError> {
     let mut img = base.clone();
     let mut clamped_total = 0u64;
     // Canonical insertion order (stage.rs apply_chain semantics, inlined
@@ -280,8 +278,14 @@ mod tests {
         };
         let wire = f.to_wire();
         assert_eq!(wire.len(), WIRE_HEADER_LEN + 24);
-        assert_eq!(u32::from_le_bytes(wire[0..4].try_into().unwrap()), WIRE_MAGIC);
-        assert_eq!(u32::from_le_bytes(wire[4..8].try_into().unwrap()), WIRE_VERSION);
+        assert_eq!(
+            u32::from_le_bytes(wire[0..4].try_into().unwrap()),
+            WIRE_MAGIC
+        );
+        assert_eq!(
+            u32::from_le_bytes(wire[4..8].try_into().unwrap()),
+            WIRE_VERSION
+        );
         assert_eq!(u32::from_le_bytes(wire[8..12].try_into().unwrap()), 3);
         assert_eq!(u32::from_le_bytes(wire[12..16].try_into().unwrap()), 2);
         assert_eq!(f64::from_le_bytes(wire[16..24].try_into().unwrap()), 1.5);
