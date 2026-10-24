@@ -1,11 +1,14 @@
 <script lang="ts">
-  // App shell (S2 editor MVP layout, UX_SPEC §4): toolbar / viewport /
-  // right panel rail / status bar. Keyboard map: O open · B hold-compare ·
-  // Ctrl+S save recipe · E export (partial M4 polish deferred).
+  // App shell (UX_SPEC §2/§4, M4 #23): S1 Home ⇆ S2 Editor with the full
+  // panel rail (Basic / Color / Film Lab / LUT / Lens / Grain·Halation /
+  // AI / Export), filmstrip, and the §8 keyboard map:
+  //   O open · Ctrl+S save · B hold-compare · E export · [ ] cycle panels
+  //   0 fit · 1 100% · 2 200% · +/− zoom · Space compare · Ctrl+Z/Y history
   import { onMount } from "svelte";
   import {
     openImageDialog,
     openImage,
+    closeImage,
     getState,
     saveRecipe,
     undo as undoCmd,
@@ -13,35 +16,94 @@
     listStocks,
     getFilm,
   } from "./lib/ipc";
-  import { t, setLang, type Lang } from "./lib/i18n";
-  import { state, lastError, toast, compareOn, stocks, film } from "./lib/stores";
+  import { t, setLang, locale, type Lang } from "./lib/i18n";
+  import { applyTheme } from "./lib/theme";
+  import {
+    state,
+    lastError,
+    toast,
+    compareOn,
+    stocks,
+    film,
+    missingStock,
+    settings,
+  } from "./lib/stores";
+  import { getSettings } from "./lib/ipc";
   import Toolbar from "./components/Toolbar.svelte";
   import Viewport from "./components/Viewport.svelte";
-  import LutPanel from "./components/LutPanel.svelte";
+  import Home from "./components/Home.svelte";
+  import BasicPanel from "./components/BasicPanel.svelte";
+  import ColorPanel from "./components/ColorPanel.svelte";
   import FilmLab from "./components/FilmLab.svelte";
+  import LutPanel from "./components/LutPanel.svelte";
+  import LensPanel from "./components/LensPanel.svelte";
+  import GrainHalationPanel from "./components/GrainHalationPanel.svelte";
   import TonePanel from "./components/TonePanel.svelte";
   import ModelManager from "./components/ModelManager.svelte";
   import StockBrowser from "./components/StockBrowser.svelte";
   import ExportDialog from "./components/ExportDialog.svelte";
   import ImportLutDialog from "./components/ImportLutDialog.svelte";
+  import PresetManager from "./components/PresetManager.svelte";
+  import Settings from "./components/Settings.svelte";
+  import Filmstrip from "./components/Filmstrip.svelte";
+  import Badge from "./components/Badge.svelte";
   import ErrorBanner from "./components/ErrorBanner.svelte";
 
+  /** Panel rail order = UX_SPEC §4 (tab order fixed). */
+  const PANELS = [
+    "basic",
+    "color",
+    "film",
+    "lut",
+    "lens",
+    "grain",
+    "ai",
+  ] as const;
+  type PanelId = (typeof PANELS)[number];
+  const panelLabel: Record<PanelId, string> = {
+    basic: "panel.basic",
+    color: "panel.color",
+    film: "panel.film",
+    lut: "panel.lut.title",
+    lens: "panel.lens",
+    grain: "panel.grain",
+    ai: "panel.ai",
+  };
+
+  let activePanel: PanelId = "basic";
   let exportOpen = false;
   let importOpen = false;
+  let presetsOpen = false;
+  let settingsOpen = false;
+  let stockBrowserOpen = false;
   let viewport: Viewport;
   let lutPanel: LutPanel;
-  let stockBrowserOpen = false;
-  let lang: Lang = "en";
+  let filmstrip: Filmstrip;
+
+  $: showHome = !$state.imageOpen;
 
   async function refreshState() {
     try {
       const s = await getState();
       state.set(s);
-      // Parameter settled with unsaved changes → schedule the debounced
-      // autosave (M4 #24). Every mutation path ends in refreshState, so
-      // this is the single settle point.
+      missingStock.set(s.missingStock);
       if (s.dirty && s.imageOpen) scheduleAutosave();
       else if (!s.dirty) cancelAutosave();
+    } catch (e) {
+      lastError.set(e as never);
+    }
+  }
+
+  async function doOpenPath(path: string) {
+    try {
+      await openImage(path);
+      await refreshState();
+      await refreshRecipePanels();
+      await viewport?.setViewportSize(
+        window.innerWidth - 300,
+        window.innerHeight - 120,
+      );
+      filmstrip?.refresh();
     } catch (e) {
       lastError.set(e as never);
     }
@@ -50,26 +112,17 @@
   async function doOpen() {
     const path = await openImageDialog();
     if (!path) return;
-    try {
-      await openImage(path);
-      await refreshState();
-      await viewport?.setViewportSize(
-        window.innerWidth - 300,
-        window.innerHeight - 120,
-      );
-    } catch (e) {
-      lastError.set(e as never);
-    }
+    await doOpenPath(path);
   }
 
-  // ── Autosave (M4 #24, UX_SPEC §4: "autosave indicator (dot, never
-  // modal)") ────────────────────────────────────────────────────────
-  // Recipe mutations settle → debounced save_recipe; the toolbar's dirty
-  // badge IS the indicator (appears while dirty, clears when saved). No
-  // toasts, no modals. Explicit Ctrl+S cancels the pending timer (already
-  // saved). Crash-safety: the save path is the shared durable primitive
-  // (kill-battery-tested), so a kill mid-autosave leaves the previous
-  // complete sidecar.
+  /** Every history jump / preset apply / open lands here: panels mirror
+   * recipe state — the UI never shows a stale recipe. */
+  async function refreshRecipePanels() {
+    getFilm().then((f) => film.set(f)).catch(console.error);
+    lutPanel?.reload();
+  }
+
+  // ── Autosave (M4 #24, UX_SPEC §4 "dot, never modal") ────────────────
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
   const AUTOSAVE_DELAY_MS = 900;
 
@@ -81,8 +134,6 @@
         await saveRecipe();
         await refreshState(); // dirty badge clears — that's the whole UI
       } catch (e) {
-        // Never a modal: the dirty badge stays; the error banner shows
-        // the code + guidance (UX_SPEC §9).
         lastError.set(e as never);
       }
     }, AUTOSAVE_DELAY_MS);
@@ -96,7 +147,7 @@
   }
 
   async function doSave() {
-    cancelAutosave(); // explicit save supersedes the pending timer
+    cancelAutosave();
     try {
       await saveRecipe();
       toast.set(t("toolbar.saved"));
@@ -104,6 +155,17 @@
     } catch (e) {
       lastError.set(e as never);
     }
+  }
+
+  /** Home (toolbar ◀) — close the session, keep the library. */
+  async function goHome() {
+    cancelAutosave();
+    try {
+      await closeImage();
+    } catch {
+      /* closing without a session is fine */
+    }
+    await refreshState();
   }
 
   function onLutChanged() {
@@ -114,6 +176,12 @@
   function onToneChanged() {
     viewport?.refresh();
     refreshState();
+  }
+
+  /** Panel cycling (UX_SPEC §8 `[` / `]`). */
+  function cyclePanel(dir: 1 | -1) {
+    const i = PANELS.indexOf(activePanel);
+    activePanel = PANELS[(i + dir + PANELS.length) % PANELS.length];
   }
 
   function onKey(e: KeyboardEvent) {
@@ -133,20 +201,52 @@
       }
       return;
     }
-    if (e.key === "o") doOpen();
-    else if (e.key === "e") exportOpen = $state.imageOpen;
+    // Typing in an input/textarea must not trigger the map.
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    switch (e.key) {
+      case "o":
+        doOpen();
+        break;
+      case "e":
+        if ($state.imageOpen) exportOpen = true;
+        break;
+      case "[":
+        cyclePanel(-1);
+        break;
+      case "]":
+        cyclePanel(1);
+        break;
+      case "0":
+        viewport?.zoomPercent(0); // fit
+        break;
+      case "1":
+        viewport?.zoomPercent(1); // 100% pixel-exact
+        break;
+      case "2":
+        viewport?.zoomPercent(2); // 200%
+        break;
+      case "+":
+      case "=":
+        viewport?.zoomBy(1.25);
+        break;
+      case "-":
+        viewport?.zoomBy(1 / 1.25);
+        break;
+      case " ":
+        if ($state.imageOpen) {
+          e.preventDefault();
+          compareOn.update((v) => !v);
+        }
+        break;
+    }
   }
 
-  /** Undo/redo (M4 #24, UX_SPEC §8 keyboard map): apply, refresh every
-   * panel bound to recipe state, re-render the viewport. */
   async function doUndo() {
     try {
       state.set(await undoCmd());
       viewport?.refresh();
-      // Panels mirror recipe state (film/tone/LUT) — re-fetch so the UI
-      // never shows a stale recipe after a history jump.
-      getFilm().then((f) => film.set(f)).catch(console.error);
-      lutPanel?.reload();
+      await refreshRecipePanels();
     } catch (e) {
       lastError.set(e as never);
     }
@@ -156,18 +256,32 @@
     try {
       state.set(await redoCmd());
       viewport?.refresh();
-      getFilm().then((f) => film.set(f)).catch(console.error);
-      lutPanel?.reload();
+      await refreshRecipePanels();
     } catch (e) {
       lastError.set(e as never);
     }
   }
 
-  onMount(() => {
+  /** A preset replaced the whole recipe — refresh everything bound to it. */
+  async function onPresetApplied() {
+    viewport?.refresh();
+    await refreshState();
+    await refreshRecipePanels();
+  }
+
+  onMount(async () => {
     refreshState();
-    // Film Lab (M2): registry + current film state.
     listStocks().then((s) => stocks.set(s)).catch(console.error);
     getFilm().then((f) => film.set(f)).catch(console.error);
+    // Settings drive language + theme at startup (S7).
+    try {
+      const s = await getSettings();
+      settings.set(s);
+      setLang(s.language as Lang);
+      applyTheme(s.theme);
+    } catch {
+      /* defaults */
+    }
     const h = window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
@@ -179,43 +293,79 @@
 <div class="app">
   <Toolbar
     onOpen={doOpen}
+    onHome={goHome}
     onExport={() => (exportOpen = true)}
     onSave={doSave}
     onUndo={doUndo}
     onRedo={doRedo}
+    onPresets={() => (presetsOpen = true)}
+    onSettings={() => (settingsOpen = true)}
+    onZoomIn={() => viewport?.zoomBy(1.25)}
+    onZoomOut={() => viewport?.zoomBy(1 / 1.25)}
+    onActual={() => viewport?.zoomPercent(1)}
   />
   <ErrorBanner />
+  {#if $missingStock}
+    <div class="warnline" role="status">
+      {t("badge.missingStock", { stock: $missingStock })}
+    </div>
+  {/if}
   <main>
-    <Viewport bind:this={viewport} imageOpen={$state.imageOpen} />
-    <aside class="rail" aria-label={t("panel.lut")}>
-      <div class="rail-head">
-        <h2>{t("panel.lut")}</h2>
-        <select
-          bind:value={lang}
-          on:change={() => setLang(lang)}
-          aria-label="Language"
-        >
-          <option value="en">EN</option>
-          <option value="vi">VI</option>
-        </select>
+    {#if showHome}
+      <Home onOpenPath={doOpenPath} onOpenDialog={doOpen} />
+    {:else}
+      <div class="editor">
+        <Viewport bind:this={viewport} imageOpen={$state.imageOpen} />
+        <Filmstrip bind:this={filmstrip} visible={$state.imageOpen} onStockPicked={onLutChanged} />
       </div>
-      <LutPanel bind:this={lutPanel} onChange={onLutChanged} />
-      <div class="rail-actions">
-        <button on:click={() => (importOpen = true)}>
-          {t("panel.lut.import")}
-        </button>
-      </div>
-      <div class="rail-head film-head">
-        <h2>Film Lab</h2>
-        <button class="link" on:click={() => (stockBrowserOpen = true)}>
-          Browse stocks…
-        </button>
-      </div>
-      <FilmLab />
-      <StockBrowser bind:open={stockBrowserOpen} />
-      <TonePanel onChange={onToneChanged} />
-      <ModelManager />
-    </aside>
+      <aside class="rail" aria-label={t(panelLabel[activePanel])}>
+        <div class="rail-tabs" role="tablist" aria-label={t("app.title")}>
+          {#each PANELS as p (p)}
+            <button
+              role="tab"
+              aria-selected={activePanel === p}
+              tabindex={activePanel === p ? 0 : -1}
+              on:click={() => (activePanel = p)}
+            >
+              {t(panelLabel[p])}
+            </button>
+          {/each}
+        </div>
+        <div class="rail-body" role="tabpanel" aria-label={t(panelLabel[activePanel])}>
+          {#key $locale}
+            {#if activePanel === "basic"}
+              <BasicPanel onChange={onToneChanged} />
+            {:else if activePanel === "color"}
+              <ColorPanel onChange={onToneChanged} />
+            {:else if activePanel === "film"}
+              <div class="film-wrap">
+                <div class="rail-head">
+                  <h2>{t("panel.film")}</h2>
+                  <button class="link" on:click={() => (stockBrowserOpen = true)}>
+                    {t("stock.browse")}
+                  </button>
+                </div>
+                <FilmLab />
+              </div>
+            {:else if activePanel === "lut"}
+              <LutPanel bind:this={lutPanel} onChange={onLutChanged} />
+              <div class="rail-actions">
+                <button on:click={() => (importOpen = true)}>
+                  {t("panel.lut.import")}
+                </button>
+              </div>
+            {:else if activePanel === "lens"}
+              <LensPanel onChange={onLutChanged} />
+            {:else if activePanel === "grain"}
+              <GrainHalationPanel onChange={onLutChanged} />
+            {:else if activePanel === "ai"}
+              <TonePanel onChange={onToneChanged} />
+              <ModelManager />
+            {/if}
+          {/key}
+        </div>
+      </aside>
+    {/if}
   </main>
   <footer class="statusbar mono">
     {#if $state.imageName}
@@ -243,6 +393,11 @@
     onLutChanged();
   }}
 />
+<PresetManager bind:open={presetsOpen} canApply={$state.imageOpen} onApplied={onPresetApplied} />
+<Settings bind:open={settingsOpen} />
+{#if !$state.imageOpen}
+  <StockBrowser bind:open={stockBrowserOpen} />
+{/if}
 
 <style>
   .app {
@@ -252,8 +407,17 @@
   }
   main {
     display: grid;
-    grid-template-columns: 1fr 280px;
+    grid-template-columns: 1fr 300px;
     min-height: 0;
+  }
+  main:has(.home) {
+    grid-template-columns: 1fr;
+  }
+  .editor {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    min-height: 0;
+    min-width: 0;
   }
   .rail {
     background: var(--bg-panel);
@@ -261,7 +425,11 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+  .rail-body {
+    flex: 1;
     overflow-y: auto;
+    min-height: 0;
   }
   .rail-head {
     display: flex;
@@ -274,10 +442,24 @@
     font-weight: 600;
     margin: 0;
   }
+  .rail-head .link {
+    background: none;
+    border: none;
+    color: var(--info);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+  }
   .rail-actions {
     padding: var(--space-3);
     border-top: 1px solid var(--stroke-subtle);
-    margin-top: auto;
+  }
+  .warnline {
+    background: color-mix(in srgb, var(--warn) 14%, var(--bg-panel));
+    color: var(--warn);
+    border-bottom: 1px solid var(--warn);
+    padding: 4px 12px;
+    font-size: 12px;
   }
   .statusbar {
     display: flex;

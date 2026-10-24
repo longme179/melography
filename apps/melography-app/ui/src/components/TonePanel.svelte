@@ -1,8 +1,8 @@
 <script lang="ts">
-  /** Tone panel (M3, issue #13): scene-referred corrections + the baseline
-   *  auto-lighting suggestion (Accept / Adjust / Dismiss — AI_MODELS §7).
-   *  Suggestions become editable parameters; provenance is recorded in the
-   *  sidecar on Accept (ADR-0004 §6). */
+  /** AI panel (M3 issue #13 → M4 #23 restructure): the baseline
+   *  auto-lighting suggestion (Accept / Adjust / Dismiss — AI_MODELS §7)
+   *  plus model management. The parameter SLIDERS live in Basic / Color;
+   *  this panel owns the suggestion conversation and its provenance. */
   import {
     autoLightSuggest,
     getTone,
@@ -91,17 +91,12 @@
     suggestion.set(null);
   }
 
-  function noteKey(n: string): string {
-    return `suggest.notes.${n}`;
-  }
-
-  function setWb(key: "r" | "g" | "b", v: number) {
-    const wb = params.wb ?? { r: 1, g: 1, b: 1 };
-    push({ wb: { ...wb, [key]: v } });
-  }
-
   function fmt(v: number, digits = 2): string {
     return (v >= 0 ? "+" : "") + v.toFixed(digits);
+  }
+
+  function noteKey(n: string): string {
+    return `suggest.notes.${n}`;
   }
 
   getTone().then((s) => tone.set(s)).catch(console.error);
@@ -109,7 +104,7 @@
 
 <section class="panel">
   <div class="head">
-    <h2>{t("tone.title")}</h2>
+    <h2>{t("panel.ai")}</h2>
     <div class="actions">
       <button class="primary" disabled={busy} on:click={suggest}>
         {t("tone.auto")}
@@ -160,93 +155,6 @@
   {/if}
 
   {#if $tone?.params}
-    <label class="row">
-      <span>{t("tone.ev")}</span>
-      <input
-        type="range"
-        min="-3"
-        max="3"
-        step="0.05"
-        value={params.ev}
-        on:change={(e) => push({ ev: Number(e.currentTarget.value) })}
-      />
-      <span class="mono val">{fmt(params.ev)}</span>
-    </label>
-    <label class="row">
-      <span>{t("tone.highlights")}</span>
-      <input
-        type="range"
-        min="-100"
-        max="100"
-        step="1"
-        value={params.highlights}
-        on:change={(e) => push({ highlights: Number(e.currentTarget.value) })}
-      />
-      <span class="mono val">{fmt(params.highlights, 0)}</span>
-    </label>
-    <label class="row">
-      <span>{t("tone.shadows")}</span>
-      <input
-        type="range"
-        min="-100"
-        max="100"
-        step="1"
-        value={params.shadows}
-        on:change={(e) => push({ shadows: Number(e.currentTarget.value) })}
-      />
-      <span class="mono val">{fmt(params.shadows, 0)}</span>
-    </label>
-    <label class="row">
-      <span>{t("tone.wb")}</span>
-      <input
-        type="checkbox"
-        checked={params.wb !== null}
-        on:change={(e) =>
-          push({
-            wb: e.currentTarget.checked
-              ? { r: 1, g: 1, b: 1 }
-              : null,
-          })}
-      />
-    </label>
-    {#if params.wb}
-      <label class="row sub">
-        <span>R</span>
-        <input
-          type="range"
-          min="0.5"
-          max="2"
-          step="0.01"
-          value={params.wb.r}
-          on:change={(e) => setWb("r", Number(e.currentTarget.value))}
-        />
-        <span class="mono val">{params.wb.r.toFixed(2)}</span>
-      </label>
-      <label class="row sub">
-        <span>G</span>
-        <input
-          type="range"
-          min="0.5"
-          max="2"
-          step="0.01"
-          value={params.wb.g}
-          on:change={(e) => setWb("g", Number(e.currentTarget.value))}
-        />
-        <span class="mono val">{params.wb.g.toFixed(2)}</span>
-      </label>
-      <label class="row sub">
-        <span>B</span>
-        <input
-          type="range"
-          min="0.5"
-          max="2"
-          step="0.01"
-          value={params.wb.b}
-          on:change={(e) => setWb("b", Number(e.currentTarget.value))}
-        />
-        <span class="mono val">{params.wb.b.toFixed(2)}</span>
-      </label>
-    {/if}
     {#if $tone?.source}
       <div class="meta">
         {t("suggest.accepted_from")}

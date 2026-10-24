@@ -34,8 +34,9 @@ pub(crate) fn default_true() -> bool {
 }
 
 /// RFC 3339 UTC timestamp without a chrono dependency (same civil-date
-/// algorithm as the lut library module; shared here for sidecars).
-pub(crate) fn utc_now_rfc3339() -> String {
+/// algorithm as the lut library module; shared here for sidecars and the
+/// app's settings/recents/presets stores).
+pub fn utc_now_rfc3339() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
