@@ -182,6 +182,12 @@ impl MonotoneSpline {
     pub fn direction(&self) -> CurveDirection {
         self.direction
     }
+
+    /// Raw control data for mirrors (GPU packing, fit tooling):
+    /// `(x, y, tangent)` triplets, all the same length.
+    pub fn control_data(&self) -> (&[f64], &[f64], &[f64]) {
+        (&self.xs, &self.ys, &self.ms)
+    }
 }
 
 /// Fritsch–Carlson monotone tangents.

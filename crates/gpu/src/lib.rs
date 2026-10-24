@@ -8,6 +8,11 @@
 //! tolerances) is M1/M2 work. Without the `wgpu` feature this crate exposes
 //! only the shared types (honest no-op, not a fake pass).
 
+pub mod film_pixel_types;
+
+#[cfg(feature = "wgpu")]
+pub mod film_pixel;
+
 #[cfg(feature = "wgpu")]
 pub mod lut3d;
 

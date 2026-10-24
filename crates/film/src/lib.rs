@@ -18,6 +18,7 @@ pub mod chain;
 pub mod curves;
 pub mod emulsion;
 pub mod frame;
+pub mod gpu_bridge;
 pub mod grain;
 pub mod hash;
 pub mod optics;

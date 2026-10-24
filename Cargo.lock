@@ -1138,6 +1138,7 @@ name = "melography-film"
 version = "0.0.1"
 dependencies = [
  "melography-core",
+ "melography-gpu",
  "serde",
  "serde_json",
  "sha2",
@@ -1150,8 +1151,10 @@ version = "0.0.1"
 dependencies = [
  "bytemuck",
  "melography-core",
+ "melography-film",
  "melography-gpu",
  "melography-lut",
+ "melography-presets",
  "pollster",
  "serde",
  "serde_json",
