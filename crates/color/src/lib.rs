@@ -22,7 +22,8 @@ pub mod spaces;
 pub mod srgb_tf;
 
 pub use lcms::{
-    ap1_profile, lcms2_version, p3_profile, profile_for_encoding, srgb_profile, ColorError,
+    ap1_profile, icc_bytes_deterministic, lcms2_version, p3_profile, profile_for_encoding,
+    srgb_profile, ColorError,
 };
 pub use pipeline::{
     ap1_pattern_display_reference, ap1_to_srgb_lcms, ap1_to_srgb_u16_fast, ap1_to_srgb_u8_dither,

@@ -22,6 +22,10 @@ app-signing-key*
 # standalone spike crates live outside the workspace; their build dirs
 # must be ignored explicitly (root-anchored /target/ does not cover them)
 spikes/*/target/
+apps/*/target/
+apps/*/ui/node_modules/
+apps/*/ui/dist/
+apps/*/gen/
 **/*.rs.bk
 # NOTE: Cargo.lock MUST be committed once the workspace exists (application repo).
 

@@ -64,6 +64,19 @@ jobs:
         run: bash -n scripts/fetch_refs.sh
       - name: Python compile
         run: python3 -m py_compile scripts/fetch_refs.py scripts/validate_docs.py
+      - name: LUT oracle fixture freshness (issue #7)
+        run: python3 tools/lut_oracle.py --verify crates/lut/tests/oracle_fixtures.json
+      - name: Architecture guard (ARCHITECTURE §2 — core stays UI-agnostic)
+        run: |
+          # The processing core (crates/*) must never depend on the shell —
+          # the precise form of the old global cargo-deny ban on tauri/wry
+          # (which could not be scoped per-graph and broke the app's own
+          # supply-chain gate).
+          if grep -rnE 'tauri|wry' crates/*/Cargo.toml; then
+            echo "::error::processing crates must not depend on the UI shell (ARCHITECTURE §2)"
+            exit 1
+          fi
+          echo "OK: no shell dependencies in crates/*"
 
   # ── Cross-OS tooling smoke (real commands on all 3 desktop OSes; catches
   #    platform breakage of the tooling itself before Rust exists) ───────────
@@ -119,8 +132,11 @@ jobs:
         run: rustup show active-toolchain
       - name: Tests
         run: cargo test --workspace -- --nocapture
-      # GPU tests are NOT run in CI (no GPU runners) — the parity harness runs
-      # CPU only; GPU verification happens on owner devices (PLAN §5 risk 6).
+      # GPU reality per OS (measured since the first activated run, 1668e76):
+      # macos exposes a Metal adapter ('Apple Paravirtual device'), windows
+      # exposes WARP ('Microsoft Basic Render Driver') — both run the REAL
+      # wgpu gates (S1 readback + M1 lut3d CPU↔GPU parity ≤ 1e-6); ubuntu
+      # runners have no adapter and the tests report an honest skip.
 
   # ── Supply-chain gate (activates at M0 — promised by deny.toml's header) ──
   cargo-deny:
@@ -136,6 +152,43 @@ jobs:
         run: cargo install --locked --version 0.20.2 cargo-deny
       - name: Licenses + advisories + bans + sources
         run: cargo deny check
+
+  # ── M1: editor shell (apps/melography-app — excluded workspace member;
+  #    needs the webkit system stack at build time like the S4 spike, plus
+  #    node for the Svelte UI build). Frontend is built AND type-checked;
+  #    the Rust side runs fmt+clippy+tests with default (gui) features. ──
+  app-build:
+    name: Editor shell build (ubuntu)
+    needs: rust-gate
+    if: needs.rust-gate.outputs.has_rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Activate pinned toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain
+      - name: Install tauri linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev
+      - name: Node toolchain (runner-preinstalled)
+        run: node --version && npm --version
+      - name: UI install + typecheck + build (Svelte/vite)
+        run: |
+          npm --prefix apps/melography-app/ui ci
+          npm --prefix apps/melography-app/ui run check
+          npm --prefix apps/melography-app/ui run build
+      - name: App fmt + clippy (gui features)
+        run: |
+          cargo fmt --manifest-path apps/melography-app/Cargo.toml -- --check
+          cargo clippy --manifest-path apps/melography-app/Cargo.toml --all-targets -- -D warnings
+      - name: App tests (render/error/pipeline units — no GUI needed)
+        run: cargo test --manifest-path apps/melography-app/Cargo.toml
+      - name: Install cargo-deny 0.20.2 (pinned, --locked)
+        run: cargo install --locked --version 0.20.2 cargo-deny
+      - name: App supply chain (cargo-deny on the app's own lockfile)
+        run: cd apps/melography-app && cargo deny --config ../../deny.toml check
 
   # ── Spike S4: updater dummy-channel roundtrip (standalone crate, no gate) ──
   # tauri on Linux needs the webkit system stack at BUILD time even with the

@@ -1,0 +1,50 @@
+//! MELOGRAPHY editor shell — Tauri 2 host (M1 MVP, issue #8).
+//!
+//! Hard invariants (ADR-0001, ARCHITECTURE §1):
+//! * the webview never computes pixels — it receives preview frames
+//!   (`render::PreviewFrame` wire format) and sends parameters;
+//! * all pixel math flows through the shared headless pipeline
+//!   (`melography-cli` lib = the same code the CLI/CI exercise);
+//! * the original image file is never written to (sidecars only).
+//!
+//! Module map: `state` (session + library + caches) · `render` (preview
+//! composition, pure + unit-tested) · `commands` (IPC surface) ·
+//! `error` (ARCHITECTURE §8 taxonomy → stable UI codes).
+
+pub mod commands;
+pub mod error;
+pub mod render;
+pub mod state;
+
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    /// Library root: `$MELOGRAPHY_DATA`, else `<home>/.melography`
+    /// (matches the CLI default — one library for both front ends).
+    fn library_root() -> PathBuf {
+        melography_cli::default_library_root()
+    }
+
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "gui")]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+    builder
+        .manage(Mutex::new(state::EditorState::new(library_root())))
+        .invoke_handler(tauri::generate_handler![
+            commands::open_image,
+            commands::close_image,
+            commands::render_preview,
+            commands::original_frame,
+            commands::import_lut,
+            commands::list_luts,
+            commands::remove_lut,
+            commands::set_lut_stack,
+            commands::get_state,
+            commands::save_recipe,
+            commands::export_image,
+        ])
+        .run(tauri::generate_context!())
+        .expect("MELOGRAPHY window started");
+}

@@ -108,6 +108,19 @@ budgets stay provisional until those devices run the S1 harness.
 See `docs/research/spikes/{S1,S2,S3,S4}_REPORT.md` + `HEIF_PROBE.md`
 for full context; every number above is reproducible from the repo.
 
+### M1 additions (2026-10-24, session 03)
+
+| Line | M1 evidence | Status |
+|---|---|---|
+| CPU tetrahedral correctness | 656 oracle samples, worst \|Δ\| = 1.19e-7 vs the independent Python implementation | correctness gate (not a perf line) — green |
+| GPU tetrahedral parity | CI macos/windows adapters run the ≤1e-6 gate on every push (branch first run pending) | gate exists; numbers land in CI logs |
+| ICC export determinism | lcms2 profile dateTime pinned (`icc_bytes_deterministic`) after the E2E test caught byte-drift between identical exports | bug fixed, regression-tested |
+| Preview composition (app `render_preview`) | implemented with per-param full-res cache + fit-downscale; render-ms telemetry in every wire frame | **unmeasured at scale** — needs the live webview legs (issue #4) / owner devices; budget lines stay provisional |
+
+The webview-IPC + double-transform legs (S1/S2 residuals, issue #4) need a
+running GUI session — the M1 shell ships the transport and instrumentation
+for exactly that measurement.
+
 ## 5. Risk register (top 10)
 
 | # | Risk | Likelihood | Impact | Mitigation / owner of trigger |

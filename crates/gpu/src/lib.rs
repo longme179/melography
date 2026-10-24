@@ -9,6 +9,9 @@
 //! only the shared types (honest no-op, not a fake pass).
 
 #[cfg(feature = "wgpu")]
+pub mod lut3d;
+
+#[cfg(feature = "wgpu")]
 pub mod readback;
 
 #[derive(Debug, thiserror::Error)]

@@ -24,7 +24,7 @@ members = [
     "spikes/s1-transport",
     "spikes/s3-ort",
 ]
-exclude = ["spikes/s4-updater", "spikes/heif-probe"]
+exclude = ["spikes/s4-updater", "spikes/heif-probe", "apps/melography-app"]
 
 [workspace.package]
 version = "0.0.1"

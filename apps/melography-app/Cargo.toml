@@ -1,0 +1,53 @@
+[package]
+name = "melography-app"
+description = "MELOGRAPHY editor shell (Tauri 2 host) — M1 MVP: open/preview/compare/LUT/export (issue #8, ADR-0001)"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/longme179/melography"
+authors = ["MELOGRAPHY contributors"]
+publish = false
+
+# NOTE: this crate is EXCLUDED from the root workspace on purpose (same
+# pattern as spikes/s4-updater): it pulls the tauri/wry tree, which needs
+# platform webview headers (libwebkit2gtk on Linux) that the dev sandbox
+# cannot provide. CI builds it in a dedicated job with the system deps
+# installed (see .github/workflows/ci.yml `app-build`).
+
+[lib]
+name = "melography_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+melography-core = { path = "../../crates/core" }
+melography-color = { path = "../../crates/color" }
+melography-io = { path = "../../crates/io" }
+melography-lut = { path = "../../crates/lut" }
+melography-presets = { path = "../../crates/presets" }
+# The CLI lib is the shared *headless pipeline* (decode→S1→LUT→S5→encode
+# composition, ApplyOptions); both front ends consume it — ARCHITECTURE §2
+# lists app+cli as siblings over the same core crates.
+melography-cli = { path = "../../crates/cli" }
+
+# `default-features = false` + the `gui` gate: `cargo check
+# --no-default-features` type-checks the command/render layer WITHOUT the
+# wry/webkit system deps (dev sandbox has no webkit headers — the M0 S4
+# spike proved this exact pattern); CI and real builds use default
+# features (wry on).
+tauri = { version = "2", default-features = false }
+# Dialogs pull rfd→GTK on Linux, which needs system headers — gui-gated
+# (real builds always enable gui; headless check skips it).
+tauri-plugin-dialog = { version = "2", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[features]
+default = ["gui"]
+# The real window app (wry webview). CI's app-build job and bundled builds
+# use default features; headless check (no webkit headers) disables it.
+gui = ["tauri/wry", "dep:tauri-plugin-dialog"]

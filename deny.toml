@@ -27,6 +27,7 @@ allow = [
     "CC0-1.0",
     "0BSD",
     "CDLA-Permissive-2.0", # webpki-root-certs (ureq build-dep of ort-sys); permissive data license, GPL-compatible
+    "MPL-2.0", # servo stack via tauri's dom_query (cssparser, selectors, dtoa-short, option-ext, cssparser-macros). MPL-2.0 is explicitly GPL-compatible (MPL 2.0 §1.12 secondary-license mechanism); file-level weak copyleft, reviewed 2026-10-24 (M1 app-build).
 ]
 confidence-threshold = 0.93
 exceptions = []
@@ -43,18 +44,24 @@ multiple-versions = "warn"
 # and internal hygiene is enforced by clippy + review instead.
 wildcards = "allow"
 highlight = "all"
-deny = [
-    # ARCHITECTURE §2: the processing core must stay UI-agnostic — no shell
-    # types leak into crates/*. (Tauri lives only in melography-app / spikes.)
-    { crate = "tauri", reason = "processing crates must not depend on the shell (ARCHITECTURE §2)" },
-    { crate = "wry", reason = "webview types are banned from the processing core" },
-]
+# NOTE (M1): the previous global `deny` on tauri/wry enforced ARCHITECTURE
+# §2 ("processing core stays UI-agnostic") — but cargo-deny bans cannot be
+# scoped per-crate-graph, and the *app* crate legitimately depends on the
+# shell. The rule now lives where it actually applies: a CI guard that
+# forbids tauri/wry/tauri-plugin in crates/*/Cargo.toml (docs-validation
+# job, 'architecture guard' step). The app's own deny run covers its tree.
+deny = []
 
 # ── Advisories ──────────────────────────────────────────────────────────────
 [advisories]
 version = 2
 yanked = "warn"
-ignore = []
+ignore = [
+    # proc-macro-error is unmaintained (RUSTSEC-2024-0370); it is a transitive
+    # dep of the gtk3-macros stack (via tauri on Linux), build-time only, no
+    # known vulnerabilities. Tracked for replacement upstream; harmless here.
+    { id = "RUSTSEC-2024-0370", reason = "build-time transitive via gtk3-macros; no known vulns; upstream tracked" },
+]
 
 # ── Sources ─────────────────────────────────────────────────────────────────
 [sources]

@@ -837,11 +837,13 @@ dependencies = [
 name = "melography-cli"
 version = "0.0.1"
 dependencies = [
+ "bytemuck",
  "clap",
  "melography-color",
  "melography-core",
  "melography-film",
  "melography-io",
+ "melography-lut",
  "melography-presets",
  "serde",
  "serde_json",
@@ -885,7 +887,10 @@ dependencies = [
 name = "melography-gpu"
 version = "0.0.1"
 dependencies = [
+ "bytemuck",
  "melography-core",
+ "melography-gpu",
+ "melography-lut",
  "pollster",
  "serde",
  "serde_json",
@@ -910,8 +915,11 @@ dependencies = [
 name = "melography-lut"
 version = "0.0.1"
 dependencies = [
+ "melography-color",
  "melography-core",
  "serde",
+ "serde_json",
+ "sha2",
  "thiserror",
 ]
 
@@ -920,6 +928,7 @@ name = "melography-presets"
 version = "0.0.1"
 dependencies = [
  "melography-core",
+ "melography-lut",
  "serde",
  "serde_json",
  "sha2",

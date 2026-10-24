@@ -74,6 +74,30 @@ pub fn profile_from_icc(bytes: &[u8]) -> Result<Profile, ColorError> {
     Profile::new_icc(bytes).map_err(|e| ColorError::Lcms(format!("invalid ICC profile: {e:?}")))
 }
 
+/// Serialize a profile to ICC bytes with the header creation dateTime
+/// **pinned to a fixed epoch** (2026-01-01T00:00:00).
+///
+/// Why: lcms2 stamps "now" into every freshly built profile (verified by
+/// test: byte 35 — the seconds field — flips between calls). Without
+/// pinning, two exports of the same pixels embed byte-different profiles,
+/// breaking the batch-export determinism gate (luts.md §5) and every
+/// cross-process output-hash comparison. The header dateTime is
+/// informational per the ICC specification (ICC.1:2022 §7.2.7); fixing it
+/// is spec-compliant and matches how stock profiles ship with static
+/// dates. ICC header layout: bytes 24..36 = year, month, day, hour,
+/// minute, second as six u16 big-endian.
+pub fn icc_bytes_deterministic(profile: &Profile) -> Vec<u8> {
+    let mut bytes = profile
+        .icc()
+        .expect("profile serialization is total for built profiles");
+    const PINNED: [u16; 6] = [2026, 1, 1, 0, 0, 0];
+    for (i, v) in PINNED.iter().enumerate() {
+        let at = 24 + i * 2;
+        bytes[at..at + 2].copy_from_slice(&v.to_be_bytes());
+    }
+    bytes
+}
+
 fn xy_to_cie(c: spaces::Chromaticity) -> CIExyY {
     CIExyY {
         x: c.x,
