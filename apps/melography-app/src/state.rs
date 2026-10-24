@@ -3,12 +3,13 @@
 //! mutate, release — renders are fast enough at M1 scale to stay
 //! synchronous (async + worker pool arrives with tiled M2 renders).
 
+use melography_color::tone::ToneParams;
 use melography_core::ImageF32;
 use melography_film::profile::StockProfile;
 use melography_film::{Adjustments, LensParams};
 use melography_lut::stage::LutApply;
 use melography_lut::{CubeLut, LutLibrary};
-use melography_presets::sidecar::{Fingerprint, SidecarV1};
+use melography_presets::sidecar::{Fingerprint, SidecarV1, SuggestionSource};
 use render::RenderCache;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -39,6 +40,15 @@ pub struct FilmState {
     pub lens: LensParams,
 }
 
+/// Tone stage state (M3, issue #13): scene-referred WB/EV/HL-SH/shaping
+/// — the landing zone for auto-lighting suggestions. `None` = no stage.
+#[derive(Clone, Default)]
+pub struct ToneState {
+    pub params: Option<ToneParams>,
+    /// Provenance of the last accepted suggestion (sidecar-persisted).
+    pub source: Option<SuggestionSource>,
+}
+
 pub struct EditorState {
     pub session: Option<OpenSession>,
     pub library: LutLibrary,
@@ -47,6 +57,8 @@ pub struct EditorState {
     pub stocks: Vec<StockProfile>,
     pub stocks_dir: PathBuf,
     pub film: FilmState,
+    /// M3 tone stage (issue #13).
+    pub tone: ToneState,
     /// Loaded-and-verified LUTs by content hash (resolution cache).
     pub luts_loaded: HashMap<String, Arc<CubeLut>>,
     /// The user's current LUT stack (recipe serialization mirrors this).
@@ -66,6 +78,7 @@ impl EditorState {
             stocks: Vec::new(),
             stocks_dir: PathBuf::new(),
             film: FilmState::default(),
+            tone: ToneState::default(),
             luts_loaded: HashMap::new(),
             lut_stack: Vec::new(),
             sidecar: None,

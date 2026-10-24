@@ -115,6 +115,29 @@ pub fn stack_key(base: &ImageF32, stack: &[ResolvedLut]) -> u64 {
     h.finish()
 }
 
+/// Cache key for the tone leg (M3): the bit pattern of every knob —
+/// two param sets differing in any field produce different keys.
+#[must_use]
+pub fn tone_key(p: &melography_color::tone::ToneParams) -> u64 {
+    use std::hash::Hasher;
+    let mut h = DefaultHasher::new();
+    for v in [
+        p.ev,
+        p.highlights,
+        p.shadows,
+        p.wb.map_or(1.0f32, |w| w.r),
+        p.wb.map_or(1.0, |w| w.g),
+        p.wb.map_or(1.0, |w| w.b),
+        p.black_source.unwrap_or(0.0),
+        p.black_target.unwrap_or(0.0),
+        p.white_source.unwrap_or(0.0),
+        p.white_target.unwrap_or(0.0),
+    ] {
+        h.write_u32(v.to_bits());
+    }
+    h.finish()
+}
+
 /// Apply the LUT stack at full resolution (identity chain around it is
 /// implied — M1 film chain is identity; M2 inserts real stages here).
 pub fn render_full(base: &ImageF32, stack: &[ResolvedLut]) -> Result<(ImageF32, u64), LutError> {
@@ -198,23 +221,30 @@ pub fn ap1_to_rgba8_display(img: &ImageF32) -> Vec<u8> {
 }
 
 /// Compose one preview frame from the (possibly cached) full-res render.
+#[allow(clippy::too_many_arguments)]
 pub fn compose_preview(
     base: &ImageF32,
     cache: &mut Option<RenderCache>,
     stack: &[ResolvedLut],
     film: Option<&FilmLeg>,
+    tone: Option<&melography_color::tone::ToneParams>,
     max_dim: u32,
 ) -> Result<PreviewFrame, LutError> {
     let start = std::time::Instant::now();
-    // Key covers the LUT stack AND the film leg.
+    // Identity tone params are exactly "no tone leg" — same key, same path.
+    let tone = tone.filter(|t| !t.is_identity());
+    // Key covers the tone leg, the LUT stack AND the film leg.
     let mut key = stack_key(base, stack);
     if let Some(f) = film {
         key ^= f.key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
+    if let Some(t) = tone {
+        key ^= tone_key(t).wrapping_mul(0x5851_F42D_4C95_7F2D);
+    }
     let (full, clamped) = match cache {
         Some(c) if c.key == key => (c.image.clone(), c.clamped_pixels),
         _ => {
-            let (img, clamped) = render_pipeline(base, stack, film, max_dim)?;
+            let (img, clamped) = render_pipeline(base, stack, film, tone, max_dim)?;
             *cache = Some(RenderCache {
                 key,
                 image: img.clone(),
@@ -240,19 +270,27 @@ pub fn compose_preview(
     })
 }
 
-/// Preview-scale pipeline: linear downscale → film chain (scale-free
-/// physics) → LUT stack (finishing semantics) — the cached image is the
-/// final preview-resolution result.
+/// Preview-scale pipeline: tone (full-res, scene-referred — same domain as
+/// export) → linear downscale → film chain (scale-free physics) → LUT
+/// stack (finishing semantics) — the cached image is the final
+/// preview-resolution result.
 fn render_pipeline(
     base: &ImageF32,
     stack: &[ResolvedLut],
     film: Option<&FilmLeg>,
+    tone: Option<&melography_color::tone::ToneParams>,
     max_dim: u32,
 ) -> Result<(ImageF32, u64), LutError> {
+    // Tone first, at full resolution (export parity: the CLI/export path
+    // applies tone to the full-res working image before LUT/film).
+    let toned = match tone {
+        Some(t) => melography_color::tone::apply(base, t),
+        None => base.clone(),
+    };
     let mut img = if film.is_some() {
-        downscale_ap1(base, max_dim)
+        downscale_ap1(&toned, max_dim)
     } else {
-        base.clone()
+        toned
     };
     if let Some(f) = film {
         img = film_chain::render(&img, &f.params).map_err(|e| LutError::Malformed {
@@ -388,8 +426,8 @@ mod tests {
         }];
 
         let mut cache = None;
-        let f1 = compose_preview(&base, &mut cache, &stack, None, 16).unwrap();
-        let f2 = compose_preview(&base, &mut cache, &stack, None, 16).unwrap();
+        let f1 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
+        let f2 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
         assert_eq!(f1.rgba, f2.rgba, "cached path returns identical pixels");
         assert!(cache.as_ref().unwrap().key == stack_key(&base, &stack));
 
@@ -404,8 +442,48 @@ mod tests {
             ),
             lut,
         }];
-        let f3 = compose_preview(&base, &mut cache, &stack2, None, 16).unwrap();
+        let f3 = compose_preview(&base, &mut cache, &stack2, None, None, 16).unwrap();
         assert_ne!(f1.rgba, f3.rgba, "intensity 0 vs 1 must differ");
+    }
+
+    #[test]
+    fn tone_leg_changes_preview_and_cache_key() {
+        use melography_color::tone::ToneParams;
+        let base = gradient(32, 32);
+        let stack: Vec<ResolvedLut> = Vec::new();
+        let mut cache = None;
+        let f1 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
+        let key_before = cache.as_ref().unwrap().key;
+
+        // Identity tone = same key, same pixels.
+        let f_id = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            None,
+            Some(&ToneParams::default()),
+            16,
+        )
+        .unwrap();
+        assert_eq!(key_before, cache.as_ref().unwrap().key);
+        assert_eq!(f1.rgba, f_id.rgba);
+
+        // A real correction → new key → visibly brighter pixels (mean).
+        let tone = ToneParams {
+            ev: 1.0,
+            ..ToneParams::default()
+        };
+        let f_ev = compose_preview(&base, &mut cache, &stack, None, Some(&tone), 16).unwrap();
+        assert_ne!(key_before, cache.as_ref().unwrap().key);
+        let mean = |f: &PreviewFrame| {
+            f.rgba.iter().map(|&c| u32::from(c)).sum::<u32>() / f.rgba.len() as u32
+        };
+        assert!(
+            mean(&f_ev) > mean(&f1),
+            "+1 EV must brighten the preview: {} !> {}",
+            mean(&f_ev),
+            mean(&f1)
+        );
     }
 
     #[test]
