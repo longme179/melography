@@ -1,94 +1,69 @@
 # MELOGRAPHY — Agent State
 
-**Updated:** 2026-10-24T05:35Z (end of M1 session 03) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
+**Updated:** 2026-10-24T09:30Z (end of M3 session 05) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
 
 ## Current milestone
 
-**M2 (film lab core)** — complete on branch `agent/m2-film-core`,
-draft PR open (issues #10/#11/#12). §L gates green (heavy gates run in
-release via a CI step); 5 artist-authored stocks ship with schema
-validation; fitting harness live (LM vs CMA-ES recorded); GPU pixel
-kernel + parity gate shipped (spatial-stage kernels = documented M3/M4
-follow-up); preview shortfall honestly documented with a measured cause
-+ fast-path plan (docs/quality/M2_FILM_QUALITY_REPORT.md).
-PR #19 (M1) merged by owner at 78c0249 (2026-10-24T06:16Z).
+**M3 (AI assistance)** — complete on branch `agent/m3-ai-assist`,
+draft PR open (issues #13/#14). Tone stage + non-ML baseline + model
+manager + manifest gate v2 + ONNX eval harness shipped; baseline-only v1
+(no model passed the gate — ADR-0004 §7 honest outcome); benchmark
+0.205 vs naive 1.019 CI-enforced as the bar; budgets 49–61× under.
+Also on the branch: the owner-requested README build/deploy guide
+(PR #21 merged first — check its state before merging this branch).
 
 ## Branch / PR / HEAD
 
-- Working branch: `agent/m1-lut-workflow` @ `1509b0f` (pushed)
-- **Draft PR #19:** https://github.com/longme179/melography/pull/19
-- Issue permissions: PAT now has them (verified — closed #3/#5/#6 with
-  evidence comments; commented #7). Branch protection on `main`: still
-  owner-side (PAT lacks Administration:write — unchanged).
+- Working branch: `agent/m3-ai-assist` (based on `agent/readme-build-docs`)
+- PR #21 (README build/deploy + LICENSE): open/merged — **verify before M3 merge**
+- M3 PR: open on push (see session log 05)
+- Issue permissions: PAT has them; branch protection on `main` =
+  owner-side (unchanged).
 
-## M1 delivered (all on the branch; details in session 03)
+## M3 delivered (all on the branch; details in session 05 + M3_AI_REPORT)
 
-1. ✅ `.cube` parser (strict, line-attributed) + tetrahedral CPU + 1D
-   shaper — commit `775df51`; 4 real bugs caught by its own test suite
-2. ✅ Encoding contracts (fixed vocabulary; ACES verified) + intensity
-   mix + insertion points + tiled≡monolithic
-3. ✅ Independent Python oracle — 656 samples, worst |Δ| 1.19e-7 —
-   `6fa5ab3`; CI regenerates + diffs the fixture
-4. ✅ WGSL mirror + CPU↔GPU parity gate ≤1e-6 (honest-skip locally;
-   CI macos/windows run it) — `99772e1`
-5. ✅ Sidecar v1 + fingerprint policy + migration chain + byte pin —
-   `baf494c`
-6. ✅ LUT library (content-addressed, provenance, verify-at-load,
-   explicit error states)
-7. ✅ CLI `lut parse` / `apply` / `sidecar` + JPEG APP2 ICC — `54303c1`;
-   ICC dateTime determinism bug found+fixed (lcms2 stamps "now")
-8. ✅ Tauri 2 shell + Svelte UI (S2 MVP slice, EN/VI, error taxonomy →
-   dot-codes) — `472d0db` + `606cdfa`; `docs/CODEC_MATRIX.md` created
-   (M0 dangling refs); CI app-build job added
+1. ✅ Tone operator (`crates/color/tone.rs`): WB cone gains (Bradford,
+   round-trip exact), EV, HL/SH masks, percentile shaping (post-EV
+   knots); 17 tests; NaN-proof sanitize
+2. ✅ Sidecar `StageEntry::Tone` + `SuggestionSource` provenance
+3. ✅ Non-ML baseline (`crates/ai/auto_light.rs`): AI_MODELS §2; 13 tests
+4. ✅ Manifest v2 + strict gate (12 rejection tests); `ai vet` CLI
+5. ✅ Model manager (§6 states, sha256, atomic install, crash recovery);
+   `ai install/models/delete` CLI; offline install path
+6. ✅ ONNX runner + eval harness (feature `onnx`, ort rc.15); dummy
+   fixture (CC0, project-generated); benchmark = the CI bar
+7. ✅ CLI tone flags on apply/film apply; `ai suggest`
+8. ✅ App: TonePanel (Accept/Adjust/Dismiss + provenance), ModelManager,
+   EN/VI; export applies tone (preview ≡ export)
+9. ✅ CI `ai-onnx` job (clippy+tests+benchmark+release budget)
+10. ✅ docs: M3_AI_REPORT, AI_MODELS §3/§6 updates, PLAN §M3 re-pin
 
 ## Local verification (this machine)
 
-- `cargo test --workspace`: **104/104** · clippy `-D warnings`: clean ·
-  fmt: clean (both trees)
-- app (gui, via rebuilt sysroot): check ✓ · tests **7/7** · clippy ✓
+- Workspace: `cargo test --workspace` **36/36 suites green**; fmt+clippy
+  `-D warnings` clean (default + `--features onnx`)
+- onnx: 36 lib + 6 eval tests green; release budget test green
+  (60.6 ms / 49.3 ms @ 12 MP)
+- App (gui features!): check ✓ · tests **8/8** · clippy ✓ · fmt ✓ — via a
+  downloaded-.deb sysroot (PKG_CONFIG_PATH + LIBRARY_PATH +
+  LD_LIBRARY_PATH; see session 05 "sandbox sysroot" note) — the sandbox
+  has no root, so GTK/WebKit dev+runtime libs were extracted from apt
+  downloads into /tmp/sysroot
 - UI: npm ci + tsc + vite build clean
-- GPU parity: honest skip (no adapter) — CI runs the real gate
+- E2E: chart → ai suggest (honest diagnosis) → film apply --tone-ev
+  0.5 --tone-shadows 40 → sidecar stages [film_stock, tone] ✓;
+  ai vet/install/models/delete round-trip ✓
 
 ## CI status
 
-**GREEN 13/13** on `1509b0f` (run 40068658895) — incl. the new
-`app-build` job (first run), oracle-freshness + architecture-guard
-steps, and the lut3d GPU parity gate on macos Metal (1.19e-7) and
-windows WARP (bit-exact). Getting there took 3 fix iterations:
-missing cargo-deny install in the app job → wrong flag position →
-deny.toml needed MPL-2.0 allowlist + the tauri/wry global ban replaced
-by the per-graph architecture guard (a lesson: an earlier CI edit had
-silently no-op'd — the oracle step never landed until
-assertion-verified re-insertion; all future workflow edits must assert
-content).
+Expect `ai-onnx` first run on the PR (new job); all other jobs unchanged
+since M2 green 13/13. The app-build job re-verifies the app tree
+authoritatively.
 
-## Active work
+## Next five atomic actions
 
-M1 branch complete; session 03 closed. Next session: watch CI on the
-pushed branch, fix any 3-OS fallout, address owner review.
-
-## Next five atomic actions (in order)
-
-1. Owner reviews draft PR #19 (evidence-mapped body; 13/13 CI green).
-2. Address review comments (small `fix:`/`docs:` commits, same branch).
-3. On approval+merge: close #7/#8/#9 with evidence comments (leave #4
-   open — webview legs); start M2 per PLAN (film chain stages A–I,
-   tests-first on the CPU oracle — issues #10/#11/#12).
-4. Owner-side standing items: reference-device measurements (PLAN §4
-   provisional lines); S1 webview-IPC + S2 double-transform legs (issue
-   #4) need a live GUI run (xvfb harness or owner devices).
-5. Keep the sandbox sysroot alive (`~/melography-sysroot`) for M2 app
-   work; watch disk (the tauri tree filled it once this session).
-
-## Environment notes for next agent
-
-- Token: `/home/z/my-project/.secrets/gh_token` (600; now WITH issue
-  read/write — verified). REST via curl; `gh` CLI still absent.
-- Sysroot: `~/melography-sysroot` (source `env.sh` for app cargo work);
-  rebuilt this session (682 debs). **Background processes die between
-  tool calls** — run long jobs in foreground chunks with resume.
-- Disk is tight (9.9 GB): the tauri tree + workspace targets hit 100%
-  once this session; clean `*/target`, incremental caches and deb
-  archives aggressively; re-verify after every cleanup.
-- PATH needs `~/.cargo/bin`; toolchain pinned 1.99.1; node/npm v24
-  preinstalled (bun also present — npm is the CI source of truth).
+1. Push `agent/m3-ai-assist`, open the draft PR (owner review required)
+2. Close issues #13/#14 with evidence comments **after merge**
+3. M4 planning: UX_SPEC panel set vs what exists (gap list)
+4. GPU spatial kernels (M2 follow-up) — decide M4 slot
+5. Owner: review PR #21 (README) if not yet merged
