@@ -139,10 +139,22 @@ impl ToneParams {
                 && self.white_target.is_none())
     }
 
-    /// Clamp every knob into its documented range and drop invalid WB /
-    /// degenerate knots (defensive: params arrive from sidecars and IPC).
+    /// Clamp every knob into its documented range, replace non-finite
+    /// values with defaults, and drop invalid WB / degenerate knots
+    /// (defensive: params arrive from sidecars, IPC, and model output).
     #[must_use]
     pub fn sanitized(mut self) -> Self {
+        // Non-finite inputs (NaN/inf from misbehaving models or corrupt
+        // sidecars) clamp to NaN — catch them before the range clamps.
+        if !self.ev.is_finite() {
+            self.ev = 0.0;
+        }
+        if !self.highlights.is_finite() {
+            self.highlights = 0.0;
+        }
+        if !self.shadows.is_finite() {
+            self.shadows = 0.0;
+        }
         self.ev = self.ev.clamp(-5.0, 5.0);
         self.highlights = self.highlights.clamp(-100.0, 100.0);
         self.shadows = self.shadows.clamp(-100.0, 100.0);
