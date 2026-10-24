@@ -20,6 +20,7 @@ pub mod matrix;
 pub mod pipeline;
 pub mod spaces;
 pub mod srgb_tf;
+pub mod tone;
 
 pub use lcms::{
     ap1_profile, icc_bytes_deterministic, lcms2_version, p3_profile, profile_for_encoding,
