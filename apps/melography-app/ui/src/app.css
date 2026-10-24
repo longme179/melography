@@ -1,0 +1,61 @@
+/* MELOGRAPHY design tokens — UX_DESIGN_TOKENS.md (single source; the
+   light/high-contrast parity set swaps variables only). */
+:root {
+  --bg-app: #0e0f11;
+  --bg-viewport: #101112;
+  --bg-panel: #16181b;
+  --bg-elevated: #1d2024;
+  --bg-hover: #24282d;
+  --bg-active: #2b3036;
+  --fg-primary: #e7e9ec;
+  --fg-secondary: #a6adb4;
+  --fg-tertiary: #7a8188;
+  --fg-disabled: #565c63;
+  --stroke-subtle: #23262a;
+  --stroke-strong: #34383e;
+  --accent-400: #e8a33d;
+  --accent-500: #d18a28;
+  --accent-emph: #f2be66;
+  --ok: #4cb782;
+  --info: #57a9c4;
+  --neutral-info: #7a8cc0;
+  --warn: #e0b34c;
+  --danger: #d9614c;
+  --font-ui: Inter, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+  --radius: 6px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+body {
+  background: var(--bg-app);
+  color: var(--fg-primary);
+  font: 400 13.5px/1.5 var(--font-ui);
+  user-select: none;
+  overflow: hidden;
+}
+button {
+  font: inherit; color: inherit; background: var(--bg-elevated);
+  border: 1px solid var(--stroke-subtle); border-radius: var(--radius);
+  padding: 6px 12px; cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--bg-hover); }
+button:focus-visible, [tabindex]:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent-400); outline-offset: 1px;
+}
+button:disabled { color: var(--fg-disabled); cursor: default; }
+button.primary { background: var(--accent-500); border-color: var(--accent-500); color: #141414; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: var(--accent-400); }
+select, input[type="text"], input[type="number"] {
+  font: inherit; color: var(--fg-primary); background: var(--bg-elevated);
+  border: 1px solid var(--stroke-subtle); border-radius: var(--radius); padding: 4px 8px;
+}
+input[type="range"] { accent-color: var(--accent-400); }
+.badge {
+  font-size: 12px; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--stroke-subtle); color: var(--fg-secondary);
+}
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

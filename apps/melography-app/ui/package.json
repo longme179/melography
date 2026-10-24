@@ -1,0 +1,23 @@
+{
+  "name": "melography-ui",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "MELOGRAPHY editor shell UI (Svelte + TS; the webview never computes pixels — ADR-0001)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^3.1.0",
+    "@tauri-apps/cli": "^2",
+    "svelte": "^4.2.19",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.1.0",
+    "@tauri-apps/plugin-dialog": "^2.8.3"
+  }
+}

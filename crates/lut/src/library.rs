@@ -163,6 +163,12 @@ impl LutLibrary {
         Self { root: root.into() }
     }
 
+    /// The library root directory (app layers display/configure it).
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     fn luts_dir(&self) -> PathBuf {
         self.root.join("luts")
     }
