@@ -175,8 +175,32 @@ impl Default for ImageRef {
     }
 }
 
-/// One pipeline stage entry (tagged by `stage`).
-///
+/// Provenance of an auto-accepted suggestion (ADR-0004 §6: parameters are
+/// recorded as plain values + source, "reproducible forever after, even if
+/// the model is deleted"). The baseline and any future ONNX predictor both
+/// stamp this — the sidecar never depends on model availability.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SuggestionSource {
+    /// `baseline` (deterministic, no model) or `model` (ONNX predictor).
+    pub kind: SuggestionKind,
+    /// Engine id, e.g. `autolight-baseline-v1` or a model manifest id.
+    pub name: String,
+    /// Engine/model semver.
+    pub version: String,
+    /// Weights SHA-256 (model suggestions only; baseline has no weights).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weights_sha256: Option<String>,
+    /// RFC 3339 UTC timestamp of acceptance.
+    pub accepted_utc: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuggestionKind {
+    Baseline,
+    Model,
+}
+
 /// `Lut` mirrors [`LutApply`] minus the runtime-resolved LUT data: the
 /// sidecar carries the *reference* (`instance` = library content hash);
 /// resolution + integrity check happen at load (library.rs).
@@ -200,6 +224,20 @@ pub enum StageEntry {
         stock_version: u32,
         adjustments: melography_film::Adjustments,
         lens: melography_film::LensParams,
+        #[serde(default = "crate::default_true")]
+        enabled: bool,
+        #[serde(flatten)]
+        extra: BTreeMap<String, serde_json::Value>,
+    },
+    /// M3 scene-referred tone stage (issue #13): white-balance gains, EV,
+    /// highlights/shadows, percentile black/white shaping. The landing
+    /// zone for auto-lighting suggestions — values stay editable, the
+    /// optional `source` records provenance (ADR-0004 §6).
+    #[serde(rename_all = "snake_case")]
+    Tone {
+        params: melography_color::tone::ToneParams,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<SuggestionSource>,
         #[serde(default = "crate::default_true")]
         enabled: bool,
         #[serde(flatten)]
@@ -260,6 +298,7 @@ impl TryInto<LutApply> for &StageEntry {
             StageEntry::FilmStock { .. } => Err(RecipeError::Io(
                 "film-stock stage is not a LUT stage".into(),
             )),
+            StageEntry::Tone { .. } => Err(RecipeError::Io("tone stage is not a LUT stage".into())),
         }
     }
 }
@@ -605,5 +644,76 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
             .count();
         assert_eq!(litter, 0);
+    }
+
+    #[test]
+    fn tone_stage_roundtrips_with_provenance() {
+        let mut sc = SidecarV1::new("y.jpg", None);
+        sc.pipeline.stages.push(StageEntry::Tone {
+            params: melography_color::tone::ToneParams {
+                ev: 0.4,
+                highlights: -12.0,
+                shadows: 8.0,
+                wb: Some(melography_color::tone::WbGains {
+                    r: 1.08,
+                    g: 1.0,
+                    b: 0.93,
+                }),
+                black_source: Some(0.05),
+                black_target: Some(0.02),
+                white_source: Some(0.8),
+                white_target: Some(0.95),
+            },
+            source: Some(SuggestionSource {
+                kind: SuggestionKind::Baseline,
+                name: "autolight-baseline-v1".into(),
+                version: "1.0.0".into(),
+                weights_sha256: None,
+                accepted_utc: "2026-10-24T12:00:00Z".into(),
+            }),
+            enabled: true,
+            extra: BTreeMap::new(),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("y.melography.json");
+        sc.save(&path).unwrap();
+        let loaded = SidecarV1::load(&path).unwrap();
+        assert_eq!(loaded, sc);
+        match &loaded.pipeline.stages[0] {
+            StageEntry::Tone { params, source, .. } => {
+                assert!((params.ev - 0.4).abs() < 1e-7);
+                let src = source.as_ref().expect("provenance survives");
+                assert_eq!(src.kind, SuggestionKind::Baseline);
+                assert_eq!(src.name, "autolight-baseline-v1");
+                assert!(src.weights_sha256.is_none());
+            }
+            other => panic!("expected tone stage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tone_stage_defaults_and_legacy_shape() {
+        // A tone stage without `source`/`enabled` (a future writer omitting
+        // optional fields) must load with defaults — additive-field rule.
+        let json = serde_json::json!({
+            "stage": "tone",
+            "params": {
+                "ev": 0.0, "highlights": 0.0, "shadows": 0.0
+            }
+        });
+        let entry: StageEntry = serde_json::from_value(json).expect("minimal tone stage loads");
+        match entry {
+            StageEntry::Tone {
+                params,
+                source,
+                enabled,
+                ..
+            } => {
+                assert!(params.is_identity());
+                assert!(source.is_none());
+                assert!(enabled, "enabled defaults to true");
+            }
+            other => panic!("expected tone stage, got {other:?}"),
+        }
     }
 }
