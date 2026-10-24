@@ -154,8 +154,12 @@ pub struct GrainParams {
     pub mu_r_mm: f64,
     /// Grain radius standard deviation, millimetres (≥ 0).
     pub sigma_r_mm: f64,
-    /// Amplitude curve σ(D): target RMS density fluctuation vs density.
+    /// Amplitude curve σ(D): target 48 µm-aperture RMS density
+    /// fluctuation vs density (grain.md §4 convention).
     pub sigma_curve: SigmaCurve,
+    /// Expected radial power-spectrum slope (log-log, film-plane
+    /// frequency, 0.1–0.8 Nyquist band) — the §L PSD gate target.
+    pub psd_slope: f64,
     /// Layer correlation matrix (3×3 Pearson ρ, symmetric, PSD,
     /// unit diagonal). Monochrome ignores it.
     pub rho: Mat3,
@@ -171,6 +175,9 @@ pub enum InversionPath {
     Paper,
     /// Log-response + 3×3 + gamma "scanner" model.
     Scanner,
+    /// `[ART]` direct film scan — linearize the negative directly, no
+    /// second medium (explicit bypass, UI-labelled).
+    DirectScan,
 }
 
 /// Paper or scanner response per layer.
@@ -388,6 +395,16 @@ impl StockProfile {
                     ),
                 });
             }
+            // §D numerical edges: densities are never negative — control
+            // points (response above fog) must respect that bound too.
+            for (pi, &d) in lc.density.iter().enumerate() {
+                if d < 0.0 {
+                    return Err(ProfileError::Range {
+                        field: format!("curves[{li}].density[{pi}]"),
+                        reason: "densities must be ≥ 0 (never-negative rule)".into(),
+                    });
+                }
+            }
         }
         for (li, &dmin) in self.d_min.iter().enumerate() {
             if !(dmin.is_finite() && dmin >= 0.0) {
@@ -481,6 +498,12 @@ impl StockProfile {
                 });
             }
         }
+        if !g.psd_slope.is_finite() || g.psd_slope.abs() > 10.0 {
+            return Err(ProfileError::Range {
+                field: "grain.psd_slope".into(),
+                reason: "must be a finite log-log slope within ±10".into(),
+            });
+        }
         validate_correlation(&g.rho).map_err(|reason| ProfileError::Range {
             field: "grain.rho".into(),
             reason,
@@ -502,6 +525,14 @@ impl StockProfile {
                     which: format!("paper {pi}"),
                     reason,
                 })?;
+            for &d in &pc.density {
+                if d < 0.0 {
+                    return Err(ProfileError::Range {
+                        field: format!("print.paper_curves[{pi}]"),
+                        reason: "densities must be ≥ 0 (never-negative rule)".into(),
+                    });
+                }
+            }
         }
         for &m in &p.d_mask {
             if !(m.is_finite() && m >= 0.0) {
@@ -621,8 +652,11 @@ fn validate_correlation(m: &Mat3) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
+/// Shared test fixtures (used by unit tests *and* the integration gates
+/// in `tests/gates.rs` — integration tests cannot see `#[cfg(test)]`
+/// modules). Not part of the public API surface; hidden from docs.
+#[doc(hidden)]
+pub mod testing {
     use super::*;
 
     /// A minimal valid color-negative profile used across the crate's
@@ -691,6 +725,11 @@ mod tests {
                     density: vec![0.0, 0.6, 1.2, 2.0],
                     sigma: vec![0.010, 0.030, 0.038, 0.020],
                 },
+                // Measured self-consistency anchor: the field's radial PSD
+                // slope in the 0.1-0.8 Nyquist band at 6 µm/px (gate
+                // re-measures and enforces ±15%). The fit tool recomputes
+                // this for authored profiles.
+                psd_slope: -0.869,
                 rho: Mat3([
                     1.0, 0.35, 0.20, //
                     0.35, 1.0, 0.30, //
@@ -718,6 +757,12 @@ mod tests {
             provenance_text: "Test fixture — artist-authored plausible parameters".into(),
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::test_profile;
+    use super::*;
 
     #[test]
     fn test_profile_valid() {

@@ -880,6 +880,7 @@ dependencies = [
  "melography-core",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
 ]
 

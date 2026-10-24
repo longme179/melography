@@ -14,14 +14,21 @@
 //! the Linux/Windows/macOS CI fleet. Integer randomness is u32-only
 //! (WGSL-portable). No threading, no data-dependent summation order.
 
+pub mod chain;
 pub mod curves;
+pub mod emulsion;
 pub mod frame;
+pub mod grain;
 pub mod hash;
+pub mod optics;
+pub mod print;
 pub mod profile;
 
 pub use curves::{CurveDirection, CurveError, MonotoneSpline};
+pub use emulsion::{Adjustments, CrossProcessMode, Emulsion, HalationKernel};
 pub use frame::{CropRule, FilmFrame, FRAME_LONG_MM, FRAME_SHORT_MM};
 pub use hash::{hash4, mix32, RandStream};
+pub use optics::{GaussianKernel, LensParams, Plane};
 pub use profile::{
     CalibrationRef, Confidence, GaussianComponent, GrainParams, HalationChannel, InputAssumption,
     InversionPath, LayerCurve, LayerLayout, Mat3, Polarity, PrintParams, ProfileError, Provenance,
