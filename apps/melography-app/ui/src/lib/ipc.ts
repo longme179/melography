@@ -69,6 +69,8 @@ export interface AppState {
   filmStock: string | null;
   /** Recipe referenced a stock missing from the registry (amber badge). */
   missingStock: string | null;
+  /** Absolute path of the open original (S6 add-to-batch). */
+  sourcePath: string | null;
 }
 
 export interface AppErrorPayload {
@@ -321,4 +323,94 @@ export async function wbFromCctTint(cctK: number, tint: number): Promise<WbGains
  * never touched; the sidecar stays next to it. */
 export async function closeImage(): Promise<void> {
   return invoke("close_image");
+}
+
+// ── M4 #23 part 2 (session 08): S6 batch queue + WB eyedropper ─────────────
+
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { BatchSnapshot } from "./stores";
+
+/** Every queue mutation returns the fresh snapshot; the worker also
+ * emits it as `batch://update` — whichever arrives first wins. */
+export async function batchAdd(
+  paths: string[],
+  presetId: string | null,
+  spec: { format: string; depth: number; quality: number },
+  destDir: string,
+): Promise<BatchSnapshot> {
+  return invoke<BatchSnapshot>("batch_add", { paths, presetId, spec, destDir });
+}
+
+export async function batchList(): Promise<BatchSnapshot> {
+  return invoke<BatchSnapshot>("batch_list");
+}
+
+/** Row thumbnail (lazy, cached Rust-side): PNG data URL. */
+export async function batchThumb(id: number): Promise<string> {
+  return invoke<string>("batch_thumb", { id });
+}
+
+export async function batchPause(): Promise<BatchSnapshot> {
+  return invoke<BatchSnapshot>("batch_pause");
+}
+
+export async function batchResume(): Promise<BatchSnapshot> {
+  return invoke<BatchSnapshot>("batch_resume");
+}
+
+export async function batchCancel(id: number): Promise<BatchSnapshot> {
+  return invoke<BatchSnapshot>("batch_cancel", { id });
+}
+
+export async function batchCancelAll(): Promise<BatchSnapshot> {
+  return invoke<BatchSnapshot>("batch_cancel_all");
+}
+
+/** Retry keeps the job's settings; `newDestDir` is the disk-full flow. */
+export async function batchRetry(
+  id: number,
+  newDestDir: string | null,
+): Promise<BatchSnapshot> {
+  return invoke<BatchSnapshot>("batch_retry", { id, newDestDir });
+}
+
+export async function batchRemove(id: number): Promise<BatchSnapshot> {
+  return invoke<BatchSnapshot>("batch_remove", { id });
+}
+
+export async function batchClear(): Promise<BatchSnapshot> {
+  return invoke<BatchSnapshot>("batch_clear");
+}
+
+/** Worker events → stores. Returns the unlisten fn (App unmount). */
+export async function listenBatch(
+  onSnapshot: (snap: BatchSnapshot) => void,
+): Promise<UnlistenFn> {
+  return listen<BatchSnapshot>("batch://update", (event) => onSnapshot(event.payload));
+}
+
+/** WB eyedropper: normalized (0..1, top-left) viewport coords → gains. */
+export async function wbPick(nx: number, ny: number): Promise<ToneState> {
+  return invoke<ToneState>("wb_pick", { nx, ny });
+}
+
+/** Output-folder chooser (S6 + disk-full retry flow). */
+export async function directoryDialog(title: string): Promise<string | null> {
+  const picked = await open({ directory: true, multiple: false, title });
+  return typeof picked === "string" ? picked : null;
+}
+
+/** Multi-file picker for "Add photos…". */
+export async function imageFilesDialog(): Promise<string[]> {
+  const picked = await open({
+    multiple: true,
+    filters: [
+      {
+        name: "Images",
+        extensions: ["jpg", "jpeg", "png", "tif", "tiff", "webp", "heic", "avif"],
+      },
+    ],
+  });
+  if (!picked) return [];
+  return Array.isArray(picked) ? picked : [picked];
 }

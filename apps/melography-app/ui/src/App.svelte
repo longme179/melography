@@ -27,11 +27,15 @@
     film,
     missingStock,
     settings,
+    batchJobs,
+    batchPaused,
+    wbPicker,
   } from "./lib/stores";
-  import { getSettings } from "./lib/ipc";
+  import { getSettings, listenBatch } from "./lib/ipc";
   import Toolbar from "./components/Toolbar.svelte";
   import Viewport from "./components/Viewport.svelte";
   import Home from "./components/Home.svelte";
+  import BatchQueue from "./components/BatchQueue.svelte";
   import BasicPanel from "./components/BasicPanel.svelte";
   import ColorPanel from "./components/ColorPanel.svelte";
   import FilmLab from "./components/FilmLab.svelte";
@@ -76,6 +80,9 @@
   let presetsOpen = false;
   let settingsOpen = false;
   let stockBrowserOpen = false;
+  /** S6 screen (session 08): the queue is a VIEW over the worker — the
+   *  editor session underneath stays intact and keeps rendering. */
+  let showBatch = false;
   let viewport: Viewport;
   let lutPanel: LutPanel;
   let filmstrip: Filmstrip;
@@ -95,6 +102,7 @@
   }
 
   async function doOpenPath(path: string) {
+    showBatch = false; // opening a photo goes to the editor
     try {
       await openImage(path);
       await refreshState();
@@ -204,6 +212,14 @@
     // Typing in an input/textarea must not trigger the map.
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (e.key === "Escape") {
+      if ($wbPicker) {
+        wbPicker.set(false);
+      } else if (showBatch) {
+        showBatch = false;
+      }
+      return;
+    }
     switch (e.key) {
       case "o":
         doOpen();
@@ -269,10 +285,27 @@
     await refreshRecipePanels();
   }
 
+  /** Home multi-drop (session 08): queue the handful, jump to S6. The
+   * look defaults to the current recipe (or a straight convert when no
+   * image is open) — the adder lets the user switch before adding. */
+  function onBatchFiles(paths: string[]) {
+    batchQueueFromHome = paths;
+    showBatch = true;
+  }
+
+  let batchQueueFromHome: string[] | null = null;
+
   onMount(async () => {
     refreshState();
     listStocks().then((s) => stocks.set(s)).catch(console.error);
     getFilm().then((f) => film.set(f)).catch(console.error);
+    // Worker events → the queue stores (S6 stays live on any screen).
+    listenBatch((snap) => {
+      batchJobs.set(snap.jobs);
+      batchPaused.set(snap.paused);
+    }).then((un) => {
+      unlistenBatch = un;
+    });
     // Settings drive language + theme at startup (S7).
     try {
       const s = await getSettings();
@@ -285,9 +318,11 @@
     const h = window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
+      unlistenBatch?.();
       cancelAutosave(); // never save after unmount
     };
   });
+  let unlistenBatch: (() => void) | null = null;
 </script>
 
 <div class="app">
@@ -300,6 +335,7 @@
     onRedo={doRedo}
     onPresets={() => (presetsOpen = true)}
     onSettings={() => (settingsOpen = true)}
+    onBatch={() => (showBatch = !showBatch)}
     onZoomIn={() => viewport?.zoomBy(1.25)}
     onZoomOut={() => viewport?.zoomBy(1 / 1.25)}
     onActual={() => viewport?.zoomPercent(1)}
@@ -311,11 +347,21 @@
     </div>
   {/if}
   <main>
-    {#if showHome}
-      <Home onOpenPath={doOpenPath} onOpenDialog={doOpen} />
+    {#if showBatch}
+      <BatchQueue
+        pendingFiles={batchQueueFromHome}
+        onPendingConsumed={() => (batchQueueFromHome = null)}
+        onBack={() => (showBatch = false)}
+      />
+    {:else if showHome}
+      <Home onOpenPath={doOpenPath} onOpenDialog={doOpen} onBatchFiles={onBatchFiles} />
     {:else}
       <div class="editor">
-        <Viewport bind:this={viewport} imageOpen={$state.imageOpen} />
+        <Viewport
+          bind:this={viewport}
+          imageOpen={$state.imageOpen}
+          onWbPicked={refreshState}
+        />
         <Filmstrip bind:this={filmstrip} visible={$state.imageOpen} onStockPicked={onLutChanged} />
       </div>
       <aside class="rail" aria-label={t(panelLabel[activePanel])}>
@@ -385,7 +431,11 @@
   </footer>
 </div>
 
-<ExportDialog bind:open={exportOpen} imageName={$state.imageName} />
+<ExportDialog
+  bind:open={exportOpen}
+  imageName={$state.imageName}
+  sourcePath={$state.sourcePath}
+/>
 <ImportLutDialog
   bind:open={importOpen}
   onDone={() => {

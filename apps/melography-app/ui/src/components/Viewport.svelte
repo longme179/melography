@@ -6,13 +6,24 @@
   import {
     renderPreview,
     originalFrame,
+    wbPick,
     type PreviewFrame,
   } from "../lib/ipc";
   import { t } from "../lib/i18n";
-  import { compareOn, compareSplit, zoom } from "../lib/stores";
+  import {
+    compareOn,
+    compareSplit,
+    zoom,
+    tone,
+    toast,
+    wbPicker,
+    type ToneState,
+  } from "../lib/stores";
 
   export let maxDim = 1600;
   export let imageOpen = false;
+  /** Fired after a WB pick so the shell refreshes state (dirty badge). */
+  export let onWbPicked: () => void = () => {};
 
   let canvas: HTMLCanvasElement;
   let originalCanvas: HTMLCanvasElement;
@@ -133,6 +144,16 @@
   }
 
   function onPointerDown(e: PointerEvent) {
+    if ($wbPicker && imageOpen && canvas) {
+      // WB eyedropper (UX_SPEC §6): normalized coords — Rust maps them
+      // onto the full-resolution working image; the webview never
+      // touches pixels (ADR-0001).
+      const rect = canvas.getBoundingClientRect();
+      const nx = (e.clientX - rect.left) / Math.max(rect.width, 1);
+      const ny = (e.clientY - rect.top) / Math.max(rect.height, 1);
+      pickWb(nx, ny);
+      return;
+    }
     if ((e.target as HTMLElement).classList.contains("divider")) {
       draggingDivider = true;
     } else {
@@ -140,6 +161,19 @@
       panX += 0; // anchor
     }
     container.setPointerCapture(e.pointerId);
+  }
+
+  async function pickWb(nx: number, ny: number) {
+    wbPicker.set(false);
+    try {
+      const s: ToneState = await wbPick(nx, ny);
+      tone.set(s);
+      toast.set(t("wb.picked"));
+      await refresh(); // the new gains are live in the preview
+      onWbPicked();
+    } catch (e) {
+      console.error("wb pick failed", e);
+    }
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -166,6 +200,10 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    if (e.key === "Escape" && $wbPicker) {
+      wbPicker.set(false);
+      return;
+    }
     if (e.key === "b" || e.key === "B") {
       showOriginal = true;
       blit();
@@ -208,6 +246,7 @@
 
 <div
   class="viewport"
+  class:picker={$wbPicker}
   bind:this={container}
   on:wheel|preventDefault={onWheel}
   on:pointerdown={onPointerDown}
@@ -222,6 +261,9 @@
       <p>{t("viewport.dropHere")}</p>
     </div>
   {:else}
+    {#if $wbPicker}
+      <div class="pick-banner" role="status">{t("wb.picking")}</div>
+    {/if}
     <div class="stack" style="position:relative">
       <canvas bind:this={canvas}></canvas>
       {#if $compareOn && original}
@@ -257,6 +299,23 @@
   }
   .viewport:active {
     cursor: grabbing;
+  }
+  .viewport.picker {
+    cursor: crosshair;
+  }
+  .pick-banner {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    color: var(--accent-400);
+    background: rgba(14, 15, 17, 0.85);
+    border: 1px solid var(--accent-400);
+    padding: 2px 12px;
+    border-radius: 999px;
+    z-index: 5;
+    pointer-events: none;
   }
   .empty p {
     color: var(--fg-tertiary);

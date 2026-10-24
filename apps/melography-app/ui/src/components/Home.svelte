@@ -12,6 +12,9 @@
 
   export let onOpenPath: (path: string) => void = () => {};
   export let onOpenDialog: () => void = () => {};
+  /** Multi-file drop → S6 batch queue (session 08): one file opens, a
+   *  handful becomes a batch — the two intents stay distinct. */
+  export let onBatchFiles: (paths: string[]) => void = () => {};
 
   let dragOver = false;
   let unlisten: (() => void) | null = null;
@@ -59,8 +62,12 @@
         hoverPath = event.payload.paths[0] ?? null;
       } else if (event.payload.type === "drop") {
         dragOver = false;
-        const p = event.payload.paths[0];
-        if (p) onOpenPath(p);
+        const paths = event.payload.paths ?? [];
+        if (paths.length > 1) {
+          onBatchFiles(paths); // a handful → the queue (P2's flow)
+        } else if (paths[0]) {
+          onOpenPath(paths[0]);
+        }
       } else {
         dragOver = false;
         hoverPath = null;
