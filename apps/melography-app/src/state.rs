@@ -9,7 +9,7 @@ use melography_film::profile::StockProfile;
 use melography_film::{Adjustments, LensParams};
 use melography_lut::stage::LutApply;
 use melography_lut::{CubeLut, LutLibrary};
-use melography_presets::sidecar::{Fingerprint, SidecarV1, SuggestionSource};
+use melography_presets::sidecar::{Fingerprint, SidecarV1, StageEntry, SuggestionSource};
 use render::RenderCache;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -89,10 +89,24 @@ pub struct EditorState {
     pub history: Vec<RecipeSnapshot>,
     /// Redo stack (cleared by any new mutation — standard undo semantics).
     pub redo: Vec<RecipeSnapshot>,
+    /// App settings (UX_SPEC §7) — loaded at startup, saved on change.
+    pub settings: crate::settings::Settings,
+    /// Recent files (UX_SPEC §3 S1 Home) — loaded at startup.
+    pub recents: crate::recents::Recents,
+    /// Warning surface: a sidecar/preset referenced a stock id that is
+    /// not in the registry (downgrade or missing profiles). Surfaced as
+    /// an amber badge — errors are never silently skipped (UX_SPEC §9).
+    pub missing_stock: Option<String>,
 }
 
 impl EditorState {
     pub fn new(library_root: PathBuf) -> Self {
+        let settings_path = library_root.join("settings.json");
+        let (settings, settings_warning) = crate::settings::Settings::load(&settings_path);
+        if let Some(w) = settings_warning {
+            eprintln!("melography: {w} — using defaults");
+        }
+        let recents = crate::recents::Recents::load(&library_root.join("recents.json"));
         Self {
             session: None,
             library: LutLibrary::open(&library_root),
@@ -108,7 +122,97 @@ impl EditorState {
             preview_cache: None,
             history: Vec::new(),
             redo: Vec::new(),
+            settings,
+            recents,
+            missing_stock: None,
         }
+    }
+
+    /// The recipe as sidecar-shaped stages — the single serialization of
+    /// "what is applied right now" (save_recipe and save_preset both
+    /// build from this; presets and sidecars can never drift).
+    pub fn current_stages(&self) -> Vec<StageEntry> {
+        let mut stages = Vec::with_capacity(3 + self.lut_stack.len());
+        match &self.film.stock {
+            Some(stock) => stages.push(StageEntry::FilmStock {
+                stock: stock.id.clone(),
+                stock_version: stock.profile_version,
+                enabled: self.film.adjustments.enabled,
+                adjustments: self.film.adjustments.clone(),
+                lens: self.film.lens,
+                extra: Default::default(),
+            }),
+            None => stages.push(StageEntry::FilmIdentity {
+                enabled: true,
+                extra: Default::default(),
+            }),
+        }
+        if let Some(tp) = self.tone.params {
+            stages.push(StageEntry::Tone {
+                params: tp,
+                source: self.tone.source.clone(),
+                enabled: true,
+                extra: Default::default(),
+            });
+        }
+        for a in &self.lut_stack {
+            stages.push(StageEntry::from(a));
+        }
+        stages
+    }
+
+    /// Apply sidecar-shaped stages to the live state — the ONE stage→state
+    /// code path, shared by sidecar resume (`open_image`), preset apply
+    /// (`apply_preset`) and any future import. A missing stock id sets
+    /// `missing_stock` (amber badge) and leaves the film chain off rather
+    /// than failing the whole apply — the rest of the recipe still lands.
+    pub fn apply_pipeline_stages(&mut self, stages: &[StageEntry]) {
+        self.missing_stock = None;
+        self.film = FilmState::default();
+        self.tone = ToneState::default();
+        self.luts_loaded.clear(); // resolve_stack re-loads lazily
+        let mut lut_stack = Vec::new();
+        for s in stages {
+            match s {
+                StageEntry::FilmIdentity { .. } => {}
+                StageEntry::FilmStock {
+                    stock,
+                    adjustments,
+                    lens,
+                    enabled,
+                    ..
+                } => match self.stocks.iter().find(|p| &p.id == stock) {
+                    Some(profile) => {
+                        self.film = FilmState {
+                            stock: Some(profile.clone()),
+                            adjustments: adjustments.clone(),
+                            lens: *lens,
+                        };
+                        self.film.adjustments.enabled = *enabled;
+                    }
+                    None => {
+                        self.missing_stock = Some(stock.clone());
+                    }
+                },
+                StageEntry::Tone {
+                    params,
+                    source,
+                    enabled,
+                    ..
+                } => {
+                    self.tone = crate::state::ToneState {
+                        params: if *enabled { Some(*params) } else { None },
+                        source: source.clone(),
+                    };
+                }
+                StageEntry::Lut { .. } => {
+                    if let Ok(apply) = <&StageEntry as TryInto<LutApply>>::try_into(s) {
+                        lut_stack.push(apply);
+                    }
+                }
+            }
+        }
+        self.lut_stack = lut_stack;
     }
 
     /// Capture the current recipe state.

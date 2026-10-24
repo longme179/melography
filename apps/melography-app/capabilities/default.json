@@ -1,11 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "MELOGRAPHY editor window: core + file dialogs. The webview never receives filesystem or network permissions beyond explicit user-driven dialog picks (offline-first, ADR-0004).",
+  "description": "MELOGRAPHY editor window core permissions (feature-independent). The webview never receives filesystem or network permissions beyond explicit user-driven dialog picks (offline-first, ADR-0004). Dialog permissions live in dialogs.json — gui builds only.",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "dialog:allow-open",
-    "dialog:allow-save"
+    "core:default"
   ]
 }

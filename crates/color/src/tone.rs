@@ -243,6 +243,132 @@ pub fn analysis_gains_for_gray(gray: [f32; 3]) -> WbGains {
     }
 }
 
+// ── CCT + tint parameterization (UX_SPEC §6 Color panel) ───────────────────
+//
+// The gains form round-trips exactly, but photographers think in Kelvin;
+// the Color panel therefore needs the *synthesis* direction
+// (CCT, tint) → gains, plus a display inverse for arbitrary gains
+// (auto-lighting sets gains directly from measured statistics).
+
+/// Planckian-locus chromaticity for a color temperature (Wyszecki &
+/// Stiles piecewise approximation; valid 1667–25 000 K — the published
+/// coefficients, the same fit every major WB UI uses). Input is clamped
+/// into the valid range so UI sliders can never produce garbage.
+fn planckian_locus_xy(cct_k: f64) -> (f64, f64) {
+    let t = cct_k.clamp(1667.0, 25_000.0);
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let x = if t <= 4000.0 {
+        -0.266_123_9e9 / t3 - 0.234_358_0e6 / t2 + 0.877_695_6e3 / t + 0.179_910
+    } else {
+        -3.025_846_9e9 / t3 + 2.107_037_9e6 / t2 + 0.222_634_7e3 / t + 0.240_390
+    };
+    let y = if t <= 2222.0 {
+        -1.106_381_4 * x * x * x - 1.348_110_20 * x * x + 2.185_558_32 * x - 0.202_196_83
+    } else if t < 4000.0 {
+        -0.954_947_6 * x * x * x - 1.374_185_93 * x * x + 2.091_370_15 * x - 0.167_488_67
+    } else {
+        3.081_758_0 * x * x * x - 5.873_386_70 * x * x + 3.751_129_97 * x - 0.370_014_83
+    };
+    (x, y)
+}
+
+/// Chromaticity shift per unit tint (−100 magenta ..= 100 green) along the
+/// isothermal (locus-perpendicular) direction. 0.06 in xy at the extremes
+/// matches the practical green–magenta range of camera WB sliders.
+const TINT_XY_SPAN: f64 = 0.06;
+
+fn isothermal_normal(cct_k: f64) -> (f64, f64) {
+    let d = 50.0; // K — finite-difference tangent step
+    let (x1, y1) = planckian_locus_xy(cct_k - d);
+    let (x2, y2) = planckian_locus_xy(cct_k + d);
+    let (tx, ty) = (x2 - x1, y2 - y1);
+    let len = (tx * tx + ty * ty).sqrt();
+    if len < 1e-12 {
+        return (0.0, 1.0);
+    }
+    // Perpendicular, oriented toward +y (green).
+    let (nx, ny) = (-ty / len, tx / len);
+    if ny < 0.0 {
+        (-nx, -ny)
+    } else {
+        (nx, ny)
+    }
+}
+
+/// WB cone gains from a color temperature + green–magenta tint (the
+/// UX_SPEC §6 Color panel contract: Temperature 2000–12 000 K, Tint
+/// −100..100). Synthesis inverse of [`estimate_cct_k`]: the CCT picks a
+/// Planckian-locus chromaticity, tint offsets it along the isothermal
+/// normal, then chromaticity → XYZ (Y = 1) → Bradford cones → von Kries
+/// gains — geometric-mean-normalized exactly like
+/// [`analysis_gains_for_gray`] (luminance belongs to EV, not WB).
+#[must_use]
+pub fn gains_from_cct_tint(cct_k: f32, tint: f32) -> WbGains {
+    let (x, y) = planckian_locus_xy(f64::from(cct_k));
+    let (nx, ny) = isothermal_normal(f64::from(cct_k));
+    let off = (f64::from(tint.clamp(-100.0, 100.0)) / 100.0) * TINT_XY_SPAN;
+    let (px, py) = (x + nx * off, y + ny * off);
+    if py <= 1e-9 || !(0.0..=1.0).contains(&px) {
+        return WbGains::NEUTRAL; // unreachable for the clamped inputs
+    }
+    // Chromaticity → XYZ (Y = 1) → Bradford cones.
+    let xyz = [px / py, 1.0, (1.0 - px - py) / py];
+    let cones = crate::spaces::bradford_cone_to_xyz()
+        .inverse()
+        .expect("Bradford is invertible")
+        .apply(xyz);
+    let w = crate::spaces::ap1_white_cones();
+    let mut gains = [1.0; 3];
+    for i in 0..3 {
+        gains[i] = if cones[i].abs() > 1e-9 {
+            w[i] / cones[i]
+        } else {
+            1.0
+        };
+    }
+    let geo = (gains[0] * gains[1] * gains[2]).cbrt();
+    let normalized = if geo.is_finite() && geo > 1e-9 {
+        [gains[0] / geo, gains[1] / geo, gains[2] / geo]
+    } else {
+        [1.0, 1.0, 1.0]
+    };
+    let clamp = |v: f64| (v as f32).clamp(2f32.powi(-3), 2f32.powi(3));
+    WbGains {
+        r: clamp(normalized[0]),
+        g: clamp(normalized[1]),
+        b: clamp(normalized[2]),
+    }
+}
+
+/// Display estimate of the tint value that produced these gains (the
+/// companion of [`estimate_cct_k`]): projects the gains' implied
+/// illuminant chromaticity onto the isothermal normal at the estimated
+/// CCT. Returns `None` when the gains are invalid.
+#[must_use]
+pub fn estimate_tint(gains: &WbGains) -> Option<f32> {
+    if !gains.is_valid() {
+        return None;
+    }
+    let w = crate::spaces::ap1_white_cones();
+    let ill = [
+        w[0] / f64::from(gains.r),
+        w[1] / f64::from(gains.g),
+        w[2] / f64::from(gains.b),
+    ];
+    let xyz = crate::spaces::bradford_cone_to_xyz().apply(ill);
+    let sum = xyz[0] + xyz[1] + xyz[2];
+    if sum <= 1e-12 || xyz[1] <= 1e-12 {
+        return None;
+    }
+    let (px, py) = (xyz[0] / sum, xyz[1] / sum);
+    let cct = crate::spaces::cct_from_chromaticity(crate::spaces::Chromaticity { x: px, y: py })?;
+    let (lx, ly) = planckian_locus_xy(cct);
+    let (nx, ny) = isothermal_normal(cct);
+    let dot = (px - lx) * nx + (py - ly) * ny;
+    Some((dot / TINT_XY_SPAN * 100.0) as f32)
+}
+
 // ── the operator ────────────────────────────────────────────────────────────
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
@@ -661,6 +787,79 @@ mod tests {
         });
         if let (Some(w), Some(c)) = (warm, cool) {
             assert!(w < c, "blue-boost ⇒ warm illuminant: {w} !< {c}");
+        }
+    }
+
+    #[test]
+    fn cct_tint_round_trips_through_estimate() {
+        // (CCT, tint 0) → gains → estimate_cct_k must land back on the CCT
+        // within the McCamy + locus-approximation error envelope (tighter
+        // mid-range, looser at the ends — the published accuracy shape).
+        for (cct, tol_rel) in [
+            (2000.0_f32, 0.16_f32),
+            (2856.0, 0.10), // tungsten
+            (4000.0, 0.06),
+            (5500.0, 0.04),
+            (6504.0, 0.04), // daylight
+            (8000.0, 0.06),
+            (12000.0, 0.12),
+        ] {
+            let g = gains_from_cct_tint(cct, 0.0);
+            assert!(g.is_valid(), "invalid gains at {cct} K");
+            let est = estimate_cct_k(&g).unwrap_or_else(|| panic!("no CCT at {cct} K"));
+            let err = ((f64::from(est) - f64::from(cct)) / f64::from(cct)).abs();
+            assert!(
+                err < f64::from(tol_rel),
+                "cct {cct} → est {est} (rel err {err:.3}, tol {tol_rel})"
+            );
+        }
+    }
+
+    #[test]
+    fn cct_tint_synthesis_is_sane() {
+        // The Planckian locus passes NEAR — not through — the AP1 white
+        // (ACES white is a D-series daylight chromaticity, which sits a
+        // little green of Planckian at the same CCT; every real camera
+        // Kelvin slider behaves this way). So the best tint-0 temperature
+        // gives small-but-nonzero gains: the honest "Kelvin neutral" is
+        // ~5800 K + a small magenta tint, not exactly 1,1,1.
+        let mut best = (f32::MAX, 0.0_f32);
+        for t in (5000..=7000).step_by(25) {
+            let g = gains_from_cct_tint(t as f32, 0.0);
+            let dev = (g.r - 1.0).abs() + (g.g - 1.0).abs() + (g.b - 1.0).abs();
+            if dev < best.0 {
+                best = (dev, t as f32);
+            }
+        }
+        assert!(best.0 < 0.05, "no near-neutral T found: {best:?}");
+        // The residual is a small green-vs-daylight offset, expressible
+        // as a modest tint — i.e. the slider's neutral is reachable.
+        let g = gains_from_cct_tint(best.1, 0.0);
+        let residual_tint = estimate_tint(&g).expect("residual tint estimate");
+        assert!(
+            residual_tint.abs() < 15.0,
+            "residual tint {residual_tint} too far from the tint axis"
+        );
+
+        // Tint moves green vs magenta monotonically. +100 = green
+        // ILLUMINANT ⇒ the correction gains REDUCE green (gains are the
+        // inverse of the cast — the von Kries model).
+        let green = gains_from_cct_tint(5500.0, 100.0);
+        let magenta = gains_from_cct_tint(5500.0, -100.0);
+        assert!(green.g < magenta.g, "tint axis inverted");
+        assert!(green.is_valid() && magenta.is_valid());
+
+        // Extreme corners stay inside the ±3-stop clamp guard, never NaN.
+        for (cct, tint) in [(2000.0, -100.0), (12000.0, 100.0), (2000.0, 100.0)] {
+            let g = gains_from_cct_tint(cct, tint);
+            assert!(g.is_valid(), "invalid at {cct} K tint {tint}");
+        }
+
+        // Round-trip tint: synthesize then estimate must recover tint.
+        for tint in [-80.0_f32, -30.0, 0.0, 30.0, 80.0] {
+            let g = gains_from_cct_tint(5500.0, tint);
+            let est = estimate_tint(&g).expect("tint estimate");
+            assert!((est - tint).abs() < 8.0, "tint {tint} → est {est}");
         }
     }
 
