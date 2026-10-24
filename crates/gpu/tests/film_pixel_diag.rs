@@ -56,7 +56,7 @@ fn wgsl_sim(p: &melography_gpu::film_pixel_types::FilmPixelGpuParams, e: &[f32; 
             + (t3 - t2) * h * mb
     }
     fn log10f(x: f32) -> f32 {
-        x.log2() * 0.301_029_995_663_981_2_f32
+        x.log2() * 0.301_030_f32
     }
     fn mat3(m: &[f32; 9], v: [f32; 3]) -> [f32; 3] {
         [
