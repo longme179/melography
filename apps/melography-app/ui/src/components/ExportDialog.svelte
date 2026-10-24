@@ -1,12 +1,16 @@
 <script lang="ts">
   // Export dialog (UX_SPEC §6 Export panel slice): per-format factual
   // capability matrix — impossible combos disabled, never converted.
-  import { exportImage, exportDialog } from "../lib/ipc";
+  // "Add to batch queue" (S6, session 08): same spec, rendered by the
+  // queue worker — the editor stays free.
+  import { exportImage, exportDialog, batchAdd, directoryDialog } from "../lib/ipc";
   import { t } from "../lib/i18n";
   import { lastError, toast } from "../lib/stores";
 
   export let open = false;
   export let imageName: string | null = null;
+  /** Absolute source path (S6 add-to-batch needs the file, not the session). */
+  export let sourcePath: string | null = null;
   export let onDone: () => void = () => {};
 
   let format = "png";
@@ -30,8 +34,32 @@
         format,
       );
       if (!dest) return;
-      await exportImage({ format, depth, quality }, dest);
-      toast.set(t("export.done"));
+      const report = await exportImage({ format, depth, quality }, dest);
+      if (Array.isArray((report as { warnings?: string[] }).warnings)) {
+        // Honest state (UX_SPEC §9): e.g. LUT skipped by the film chain.
+        toast.set(t("batch.warn.lutSkipped"));
+      } else {
+        toast.set(t("export.done"));
+      }
+      open = false;
+      onDone();
+    } catch (e) {
+      lastError.set(e as never);
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** S6 flow: pick a folder, the queue worker renders it — this image
+   * or any other keeps editing meanwhile. */
+  async function addToBatch() {
+    if (busy || !sourcePath) return;
+    busy = true;
+    try {
+      const dir = await directoryDialog(t("batch.outFolder"));
+      if (!dir) return;
+      await batchAdd([sourcePath], null, { format, depth, quality }, dir);
+      toast.set(t("export.queued"));
       open = false;
       onDone();
     } catch (e) {
@@ -75,6 +103,9 @@
 
       <div class="actions">
         <button on:click={() => (open = false)}>{t("export.cancel")}</button>
+        <button disabled={busy || !sourcePath} on:click={addToBatch}>
+          {t("export.toQueue")}
+        </button>
         <button class="primary" disabled={busy} on:click={doExport}>
           {t("export.save")}
         </button>

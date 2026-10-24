@@ -13,7 +13,6 @@
 use crate::error::AppError;
 use crate::render;
 use crate::state::EditorState;
-use melography_cli::{ApplyFormat, ApplyOptions};
 use melography_color::tone::ToneParams;
 use melography_lut::stage::LutApply;
 use melography_lut::{LutEncoding, LutRecord};
@@ -26,6 +25,29 @@ use tauri::State;
 /// Inline in every command signature (type aliases cannot carry the
 /// anonymous lifetime through tauri's macro expansion).
 type St<'a> = State<'a, Mutex<EditorState>>;
+
+/// Decode a source file to the full-resolution AP1-linear working base
+/// (post S1). ONE decode path shared by `open_image` and the batch
+/// queue's lazy thumbnails (session 08).
+pub(crate) fn load_ap1(path: &Path) -> Result<melography_core::ImageF32, AppError> {
+    let decoded = melography_io::decode::decode_file(path)?;
+    let encoding = match &decoded.encoding {
+        melography_core::ColorEncoding::Icc { profile } => melography_core::ColorEncoding::Icc {
+            profile: profile.clone(),
+        },
+        _ => melography_core::ColorEncoding::Srgb { linear: false },
+    };
+    let fastpath = matches!(
+        decoded.encoding,
+        melography_core::ColorEncoding::Srgb { .. } | melography_core::ColorEncoding::Untagged
+    );
+    if fastpath {
+        Ok(melography_color::srgb_to_ap1_fast(&decoded.pixels))
+    } else {
+        melography_color::to_ap1_lcms(&decoded.pixels, &encoding)
+            .map_err(|e| AppError::new("color.transform", format!("{e}")))
+    }
+}
 
 // ─── session ────────────────────────────────────────────────────────────────
 
@@ -46,21 +68,27 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
         .map_err(|e| AppError::new("io.read", format!("cannot open {}: {e}", path.display())))?;
 
     let decoded = melography_io::decode::decode_file(&path)?;
-    let encoding = match &decoded.encoding {
-        melography_core::ColorEncoding::Icc { profile } => melography_core::ColorEncoding::Icc {
-            profile: profile.clone(),
-        },
-        _ => melography_core::ColorEncoding::Srgb { linear: false },
-    };
-    let fastpath = matches!(
-        decoded.encoding,
-        melography_core::ColorEncoding::Srgb { .. } | melography_core::ColorEncoding::Untagged
-    );
-    let ap1 = if fastpath {
-        melography_color::srgb_to_ap1_fast(&decoded.pixels)
-    } else {
-        melography_color::to_ap1_lcms(&decoded.pixels, &encoding)
-            .map_err(|e| AppError::new("color.transform", format!("{e}")))?
+    let ap1 = {
+        // Same one decode path (load_ap1) — open_image additionally
+        // needs the source encoding for the fingerprint path below.
+        let encoding = match &decoded.encoding {
+            melography_core::ColorEncoding::Icc { profile } => {
+                melography_core::ColorEncoding::Icc {
+                    profile: profile.clone(),
+                }
+            }
+            _ => melography_core::ColorEncoding::Srgb { linear: false },
+        };
+        let fastpath = matches!(
+            decoded.encoding,
+            melography_core::ColorEncoding::Srgb { .. } | melography_core::ColorEncoding::Untagged
+        );
+        if fastpath {
+            melography_color::srgb_to_ap1_fast(&decoded.pixels)
+        } else {
+            melography_color::to_ap1_lcms(&decoded.pixels, &encoding)
+                .map_err(|e| AppError::new("color.transform", format!("{e}")))?
+        }
     };
 
     let fingerprint = Fingerprint::compute(&file_bytes, &decoded.pixels);
@@ -306,6 +334,9 @@ pub struct StateJson {
     /// A recipe referenced a stock id missing from the registry (amber
     /// badge — never silently skipped, UX_SPEC §9).
     pub missing_stock: Option<String>,
+    /// Absolute path of the open original (S6 "add to batch" — the
+    /// queue renders from the source file, not the session).
+    pub source_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -379,6 +410,10 @@ fn state_json(st: &crate::state::EditorState) -> StateJson {
         can_redo: !st.redo.is_empty(),
         film_stock: st.film.stock.as_ref().map(|p| p.id.clone()),
         missing_stock: st.missing_stock.clone(),
+        source_path: st
+            .session
+            .as_ref()
+            .map(|s| s.source_path.display().to_string()),
     }
 }
 
@@ -449,87 +484,34 @@ pub fn export_image(
     args: ExportArgs,
     dest: String,
 ) -> Result<serde_json::Value, AppError> {
+    // ONE export code path (session 08): the standalone path the S6
+    // batch worker also runs — stages in, report + honest warnings out.
+    // Routing is preview-consistent (disabled film → LUT leg; disabled
+    // LUTs skipped) — see export.rs for the two M2/M3 inconsistencies
+    // this fixed.
     let st = state.lock().unwrap();
     let Some(session) = st.session.as_ref() else {
         return Err(AppError::new("session.none", "no image is open"));
     };
-    let format = ApplyFormat::parse(&args.format)?;
-    let lut_path = if let Some(first) = st.lut_stack.first() {
-        // Export re-imports the source LUT via the library (the CLI
-        // pipeline expects a file; the library holds the content-addressed
-        // copy) — byte-identical to the CLI path.
-        let blob = st
-            .library_root()
-            .join("luts")
-            .join(format!("{}.cube", first.lut_hash));
-        if blob.exists() {
-            Some(blob)
-        } else {
-            return Err(AppError::new(
-                "lut.missing",
-                format!("LUT {} is missing from the library", first.lut_hash),
-            )
-            .with_context(first.lut_hash.clone()));
-        }
-    } else {
-        None
+    let stages = st.current_stages();
+    let spec = crate::export::ExportSpec {
+        format: args.format.clone(),
+        depth: args.depth,
+        quality: args.quality,
     };
-    let apply = st.lut_stack.first().map(|first| LutApply {
-        lut_hash: first.lut_hash.clone(),
-        insertion: first.insertion,
-        intensity: first.intensity,
-        declared_input: first.declared_input,
-        declared_output: first.declared_output,
-        enabled: first.enabled,
-    });
-
-    let mut opts = ApplyOptions::simple(session.source_path.clone(), PathBuf::from(&dest));
-    opts.format = format;
-    opts.depth = args.depth;
-    opts.quality = args.quality;
-    opts.lut = lut_path;
-    opts.library_root = st.library_root();
-    opts.tone = st.tone.params.filter(|p| !p.is_identity());
-    if let Some(a) = apply {
-        opts.lut_in = a.declared_input;
-        opts.lut_out = a.declared_output;
-        opts.intensity = a.intensity;
-        opts.insertion = a.insertion;
-    }
-
-    // M2: with a stock selected the export runs the full film chain
-    // (CLI user-facing path, same as the preview semantics).
-    if let Some(stock) = st.film.stock.clone() {
-        let mut fopts = melography_cli::FilmApplyOptions {
-            input: session.source_path.clone(),
-            output: PathBuf::from(&dest),
-            stock: stock.id.clone(),
-            profiles_dir: Some(st.stocks_dir.clone()),
-            adjustments: st.film.adjustments.clone(),
-            lens: st.film.lens,
-            format,
-            depth: args.depth,
-            quality: args.quality,
-            strip_h: 512,
-            write_sidecar: false,
-            tone: st.tone.params.filter(|p| !p.is_identity()),
-        };
-        fopts.adjustments.enabled = st.film.adjustments.enabled;
-        let report = melography_cli::cmd_film_apply(&fopts);
-        if let Some(err) = report.get("error") {
-            return Err(AppError::new(
-                "export.failed",
-                err.as_str().unwrap_or("export failed").to_string(),
-            ));
-        }
-        return Ok(report);
-    }
-    let report = melography_cli::cmd_apply(&opts);
-    if let Some(err) = report.get("error") {
-        return Err(AppError::new(
-            "export.failed",
-            err.as_str().unwrap_or("export failed").to_string(),
-        ));
+    let out = crate::export::run_export(&crate::export::StandaloneExport {
+        source: &session.source_path,
+        dest: Path::new(&dest),
+        stages: &stages,
+        spec: &spec,
+        library_root: &st.library_root(),
+        profiles_dir: &st.stocks_dir,
+    })?;
+    let mut report = out.report;
+    if !out.warnings.is_empty() {
+        // Honest state (UX_SPEC §9): e.g. LUT stages skipped because the
+        // film chain is active — surfaced, never silent.
+        report["warnings"] = serde_json::json!(out.warnings);
     }
     Ok(report)
 }
@@ -729,6 +711,33 @@ pub fn wb_from_cct_tint(cct_k: f32, tint: f32) -> melography_color::tone::WbGain
     melography_color::tone::gains_from_cct_tint(cct_k, tint)
 }
 
+/// WB eyedropper (UX_SPEC §6 Color panel, session 08): pick a pixel in
+/// the viewport → gains that make that region neutral. Coordinates are
+/// NORMALIZED (0..1, top-left origin) so the UI never needs to know the
+/// preview's working resolution. The gains come from the same
+/// `analysis_gains_for_gray` math as auto-lighting — one WB path, and
+/// the pick is undo-able like every recipe mutation.
+#[tauri::command]
+pub fn wb_pick(state: St, nx: f64, ny: f64) -> Result<ToneStateJson, AppError> {
+    let mut st = state.lock().unwrap();
+    let Some(session) = st.session.as_ref() else {
+        return Err(AppError::new("session.none", "no image is open"));
+    };
+    let (w, h) = (session.width.max(1), session.height.max(1));
+    let x = (nx.clamp(0.0, 1.0) * f64::from(w - 1)).round() as u32;
+    let y = (ny.clamp(0.0, 1.0) * f64::from(h - 1)).round() as u32;
+    let gains = crate::render::wb_gains_for_region(&session.ap1, x, y, 2);
+    st.push_history(); // recipe mutation → undo-able (M4 #24)
+    let mut params = st.tone.params.unwrap_or_default();
+    params.wb = Some(gains);
+    st.tone = crate::state::ToneState {
+        params: Some(params),
+        source: None, // a hand pick is manual provenance
+    };
+    st.dirty = true;
+    Ok(tone_state_json(&st.tone))
+}
+
 /// Baseline auto-lighting suggestion (deterministic, model-free — the
 /// quality bar, ADR-0004 §1a). Analysis runs on a ≤512 px proxy.
 #[derive(Serialize)]
@@ -778,7 +787,7 @@ pub fn suggestion_provenance(kind: String, name: String, version: String) -> Sug
     }
 }
 
-fn now_rfc3339() -> String {
+pub(crate) fn now_rfc3339() -> String {
     // Minimal UTC RFC3339 without a chrono dependency (days-from-civil
     // algorithm; the provenance stamp needs second precision only).
     let now = std::time::SystemTime::now()
@@ -942,7 +951,7 @@ pub fn purge_recents(state: St) -> Result<u32, AppError> {
 
 /// Tiny standard base64 (no dependency for ~30 lines; encode-only — the
 /// app never decodes). Used for inline thumb data URLs.
-fn base64_encode(data: &[u8], out: &mut String) {
+pub(crate) fn base64_encode(data: &[u8], out: &mut String) {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     for chunk in data.chunks(3) {
         let b = [
@@ -968,7 +977,7 @@ fn base64_encode(data: &[u8], out: &mut String) {
 
 // ─── User presets (M4 #23, UX_SPEC §2 S5 Preset manager) ────────────────────
 
-fn presets_dir(st: &EditorState) -> PathBuf {
+pub(crate) fn presets_dir(st: &EditorState) -> PathBuf {
     st.library_root().join("presets")
 }
 

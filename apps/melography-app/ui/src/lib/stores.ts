@@ -16,6 +16,7 @@ export const state = writable<AppState>({
   canRedo: false,
   filmStock: null,
   missingStock: null,
+  sourcePath: null,
 });
 
 /** Latest error surfaced to the banner (UX_SPEC §9: message + cause + next action). */
@@ -201,3 +202,57 @@ export const presets = writable<UserPreset[]>([]);
 export const stockThumbs = writable<StockThumb[]>([]);
 
 export const missingStock = writable<string | null>(null);
+
+// ─── M4 #23 part 2 (session 08): S6 batch queue + WB eyedropper ────────────
+
+export interface BatchJobError {
+  code: string;
+  message: string;
+  /** i18n key for the actionable next step ("hint.*" — localized in the
+   * row, e.g. disk full → folder chooser + retry). */
+  hint: string | null;
+}
+
+export type BatchJobStatus = "queued" | "rendering" | "done" | "error" | "cancelled";
+
+export interface BatchJob {
+  id: number;
+  name: string;
+  source: string;
+  preset_id: string | null;
+  preset_name: string | null;
+  format: string;
+  depth: number;
+  quality: number;
+  dest_dir: string;
+  dest: string | null;
+  status: BatchJobStatus;
+  error: BatchJobError | null;
+  warnings: string[];
+  dims: [number, number] | null;
+  bytes: number | null;
+  total_ms: number | null;
+  added_at: string;
+  finished_at: string | null;
+  has_thumb: boolean;
+}
+
+/** Wire snapshot from Rust — jobs + the pause flag ride together so the
+ * UI never keeps a second opinion (single source: the queue itself). */
+export interface BatchSnapshot {
+  jobs: BatchJob[];
+  paused: boolean;
+}
+
+/** The queue, kept fresh by `batch://update` events + command returns. */
+export const batchJobs = writable<BatchJob[]>([]);
+export const batchPaused = writable<boolean>(false);
+
+/** Rows that are queued or rendering (toolbar badge + summary). */
+export const batchActiveCount = derived(batchJobs, (jobs) =>
+  jobs.filter((j) => j.status === "queued" || j.status === "rendering").length,
+);
+
+/** WB eyedropper mode (Color panel ⇄ Viewport): true = the next viewport
+ * click picks a neutral reference; Esc cancels. */
+export const wbPicker = writable<boolean>(false);

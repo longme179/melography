@@ -340,6 +340,37 @@ fn _ch_anchor(c: Channels) -> usize {
     c.count()
 }
 
+/// WB eyedropper math (UX_SPEC §6, session 08): mean AP1-linear RGB over
+/// a (2r+1)×(2r+1) window (edge-clamped — picks near borders still see a
+/// full sample) → gray-target cone gains via `analysis_gains_for_gray`,
+/// the SAME function auto-lighting uses. One WB path for suggestions
+/// and hand picks; pure, deterministic, testable.
+pub fn wb_gains_for_region(
+    ap1: &ImageF32,
+    cx: u32,
+    cy: u32,
+    r: u32,
+) -> melography_color::tone::WbGains {
+    let (w, h) = (ap1.width().max(1), ap1.height().max(1));
+    let x0 = cx.saturating_sub(r).min(w - 1);
+    let x1 = cx.saturating_add(r).min(w - 1);
+    let y0 = cy.saturating_sub(r).min(h - 1);
+    let y1 = cy.saturating_add(r).min(h - 1);
+    let (mut sr, mut sg, mut sb, mut n) = (0f64, 0f64, 0f64, 0u64);
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let p = ap1.pixel(x, y);
+            sr += f64::from(p[0]);
+            sg += f64::from(p[1]);
+            sb += f64::from(p[2]);
+            n += 1;
+        }
+    }
+    let n = f64::from(n.max(1) as u32);
+    let gray = [(sr / n) as f32, (sg / n) as f32, (sb / n) as f32];
+    melography_color::tone::analysis_gains_for_gray(gray)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,5 +549,70 @@ mod tests {
         assert!(rgba[0] <= 2, "{}", rgba[0]);
         let last = &rgba[(8 * 8 - 1) * 4..];
         assert!(last[1] > 200, "{last:?}");
+    }
+
+    // ── WB eyedropper (session 08) ────────────────────────────────────
+
+    fn flat(w: u32, h: u32, rgb: [f32; 3]) -> ImageF32 {
+        let mut img = ImageF32::alloc(w, h, Channels::Rgb, 0.0);
+        for y in 0..h {
+            for x in 0..w {
+                let p = img.pixel_mut(x, y);
+                p.copy_from_slice(&rgb);
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn wb_pick_on_neutral_gray_is_neutral() {
+        let img = flat(9, 9, [0.18, 0.18, 0.18]); // equal-energy gray
+        let g = wb_gains_for_region(&img, 4, 4, 2);
+        assert!(
+            g.is_neutral(),
+            "equal-energy gray needs no correction: {g:?}"
+        );
+        assert!(g.is_valid());
+    }
+
+    #[test]
+    fn wb_pick_direction_compensates_the_cast() {
+        // Warm cast (red-dominant): to neutralize, the RED gain must drop
+        // below the BLUE gain — the inverse of the measured ratios.
+        let img = flat(9, 9, [0.30, 0.18, 0.10]);
+        let g = wb_gains_for_region(&img, 4, 4, 2);
+        assert!(g.r < g.b, "warm cast must yield r-gain < b-gain: {g:?}");
+        assert!(g.is_valid());
+    }
+
+    #[test]
+    fn wb_pick_window_is_edge_clamped() {
+        // Pick at the very corner: the window clamps instead of panicking,
+        // and a flat image still yields neutral gains.
+        let img = flat(6, 6, [0.2, 0.2, 0.2]);
+        let g = wb_gains_for_region(&img, 0, 0, 2);
+        assert!(g.is_neutral(), "corner pick on flat gray: {g:?}");
+    }
+
+    #[test]
+    fn wb_pick_averages_noise_in_the_window() {
+        // A single bright outlier inside the window must not dominate a
+        // small (5×5) sample — the mean smooths pixel noise (that is why
+        // the pick is a REGION, not one pixel).
+        let mut img = flat(9, 9, [0.18, 0.18, 0.18]);
+        let p = img.pixel_mut(4, 4);
+        p.copy_from_slice(&[1.0, 1.0, 1.0]);
+        let g = wb_gains_for_region(&img, 4, 4, 2);
+        // 24 neutral + 1 white pixel: chromatically neutral. Exact 1.0
+        // is not guaranteed through the f32 cone math (observed 1 ulp),
+        // so the tolerance is one part in a million — still "neutral"
+        // by any photographic measure.
+        for v in [g.r, g.g, g.b] {
+            assert!(
+                (v - 1.0).abs() < 1e-6,
+                "chromatic mean over the window: {g:?}"
+            );
+        }
+        assert!(g.is_valid());
     }
 }

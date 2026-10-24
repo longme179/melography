@@ -4,7 +4,14 @@
    *  (Preset manager, Settings). Zoom goes through the Viewport's exact
    *  scale API — no sentinel hacks. */
   import { t } from "../lib/i18n";
-  import { state, toast, zoom, compareOn, clippingActive } from "../lib/stores";
+  import {
+    state,
+    toast,
+    zoom,
+    compareOn,
+    clippingActive,
+    batchActiveCount,
+  } from "../lib/stores";
   import Badge from "./Badge.svelte";
 
   export let onOpen: () => void = () => {};
@@ -15,6 +22,7 @@
   export let onRedo: () => void = () => {};
   export let onPresets: () => void = () => {};
   export let onSettings: () => void = () => {};
+  export let onBatch: () => void = () => {};
 
   export let onZoomIn: () => void = () => {};
   export let onZoomOut: () => void = () => {};
@@ -79,6 +87,12 @@
     <button on:click={onSave} disabled={!$state.imageOpen}>{t("toolbar.save")}</button>
     <button class="primary" on:click={onExport} disabled={!$state.imageOpen}>
       {t("toolbar.export")}
+    </button>
+    <button on:click={onBatch}>
+      {t("batch.open")}
+      {#if $batchActiveCount > 0}
+        <Badge tone="info">{$batchActiveCount}</Badge>
+      {/if}
     </button>
   </div>
 </header>

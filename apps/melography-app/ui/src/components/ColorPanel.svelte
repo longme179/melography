@@ -6,7 +6,7 @@
    *  auto-lighting. Vibrance/Saturation are honest not-available rows. */
   import { getTone, setTone, wbFromCctTint } from "../lib/ipc";
   import { t } from "../lib/i18n";
-  import { tone, toast, type ToneParams } from "../lib/stores";
+  import { tone, toast, wbPicker, type ToneParams } from "../lib/stores";
   import Slider from "./Slider.svelte";
 
   export let onChange: () => void = () => {};
@@ -53,16 +53,36 @@
     }
   }
 
+  /** Eyedropper (UX_SPEC §6): arm the viewport pick — the next click on
+   *  a neutral area sets the WB gains (Esc cancels). */
+  function togglePicker() {
+    wbPicker.update((v) => !v);
+  }
+
   getTone().then((s) => tone.set(s)).catch(console.error);
 </script>
 
 <section class="panel">
   <div class="head">
     <h3>{t("color.title")}</h3>
-    {#if hasWb}
-      <button on:click={neutral}>{t("color.neutral")}</button>
-    {/if}
+    <div class="head-actions">
+      <button
+        class:armed={$wbPicker}
+        aria-pressed={$wbPicker}
+        title={t("wb.pick.tip")}
+        on:click={togglePicker}
+      >
+        {t("wb.pick")}
+      </button>
+      {#if hasWb}
+        <button on:click={neutral}>{t("color.neutral")}</button>
+      {/if}
+    </div>
   </div>
+
+  {#if $wbPicker}
+    <p class="pick-hint" role="status">{t("wb.picking")}</p>
+  {/if}
 
   {#if hasWb}
     <Slider
@@ -117,6 +137,19 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+  }
+  .head-actions {
+    display: flex;
+    gap: var(--space-1);
+  }
+  .head-actions .armed {
+    color: var(--accent-400);
+    border-color: var(--accent-400);
+  }
+  .pick-hint {
+    font-size: 12px;
+    color: var(--accent-400);
+    margin: 0 0 var(--space-1);
   }
   .head h3 {
     font-size: 14px;
