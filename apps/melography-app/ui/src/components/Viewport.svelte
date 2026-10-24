@@ -9,7 +9,7 @@
     wbPick,
     type PreviewFrame,
   } from "../lib/ipc";
-  import { t } from "../lib/i18n";
+  import { t, fmtNum } from "../lib/i18n";
   import {
     compareOn,
     compareSplit,
@@ -57,11 +57,24 @@
     try {
       edited = await renderPreview(maxDim);
       renderMs = edited.renderMs;
+      announceRender(renderMs);
       original = await originalFrame(maxDim);
       blit();
     } catch (e) {
       console.error("preview render failed", e);
     }
+  }
+
+  // ── SR announcements (#15, UX_SPEC §8): render status, debounced so a
+  //    burst of parameter changes announces once, after the last render. ──
+  let announceTimer: ReturnType<typeof setTimeout> | undefined;
+  let srAnnounce = "";
+
+  function announceRender(ms: number) {
+    clearTimeout(announceTimer);
+    announceTimer = setTimeout(() => {
+      srAnnounce = t("viewport.renderDone", { ms: fmtNum(ms, 0) });
+    }, 400);
   }
 
   function blit() {
@@ -235,6 +248,7 @@
     });
     if (container) ro.observe(container);
     return () => {
+      clearTimeout(announceTimer);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
       ro.disconnect();
@@ -254,7 +268,6 @@
   on:pointerup={onPointerUp}
   role="img"
   aria-label={imageOpen ? t("viewport.edited") : t("viewport.dropHere")}
-  tabindex="0"
 >
   {#if !imageOpen}
     <div class="empty">
@@ -278,12 +291,14 @@
       {/if}
     </div>
     <div class="status mono">
-      <span>{renderMs.toFixed(1)} ms {t("viewport.renderMs")}</span>
+      <span>{fmtNum(renderMs, 1)} ms {t("viewport.renderMs")}</span>
       <span>·</span>
-      <span>{Math.round($zoom * 100)}%{loupeZoom ? " · " + t("viewport.loupe") : ""}</span>
+      <span>{fmtNum(Math.round($zoom * 100), 0)}%{loupeZoom ? " · " + t("viewport.loupe") : ""}</span>
       <span aria-hidden="true">·</span>
       <span class="hint">{t("viewport.holdB")} · Z 100%</span>
     </div>
+    <!-- SR render-status line (UX_SPEC §8) — visually hidden, polite. -->
+    <span class="sr-only" role="status" aria-live="polite">{srAnnounce}</span>
   {/if}
 </div>
 
@@ -296,6 +311,18 @@
     place-items: center;
     overflow: hidden;
     cursor: grab;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    overflow: hidden;
+    white-space: nowrap;
   }
   .viewport:active {
     cursor: grabbing;

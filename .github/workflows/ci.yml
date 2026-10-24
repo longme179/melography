@@ -203,6 +203,12 @@ jobs:
           npm --prefix apps/melography-app/ui ci
           npm --prefix apps/melography-app/ui run check
           npm --prefix apps/melography-app/ui run build
+      - name: UI i18n audit (#15 — parity, VI diacritics, embedded strings, error-code coverage)
+        run: node scripts/ui_i18n_audit.mjs
+      - name: UI WCAG contrast audit (#15 — AA computed from app.css tokens, all 3 themes)
+        run: node scripts/ui_contrast_audit.mjs
+      - name: UI pseudo-locale build (#15 — UX_SPEC §10; catalogs accented + 40% padded)
+        run: npm --prefix apps/melography-app/ui run build:pseudo
       - name: App fmt + clippy (gui features)
         run: |
           cargo fmt --manifest-path apps/melography-app/Cargo.toml -- --check

@@ -426,7 +426,9 @@
       {/if}
     {/if}
     {#if $toast}
-      <span class="toast">{$toast}</span>
+      <!-- role+aria-live: SR users hear "Recipe saved"-style confirmations
+           (UX_SPEC §8 announcements; #15). -->
+      <span class="toast" role="status" aria-live="polite">{$toast}</span>
     {/if}
   </footer>
 </div>

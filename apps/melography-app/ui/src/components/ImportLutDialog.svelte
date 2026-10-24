@@ -50,7 +50,14 @@
       busy = false;
     }
   }
+
+  // Esc closes the dialog (#15 a11y; never while an import is in flight).
+  function onWindowKey(e: KeyboardEvent) {
+    if (open && !busy && e.key === "Escape") open = false;
+  }
 </script>
+
+<svelte:window on:keydown={onWindowKey} />
 
 {#if open}
   <div class="overlay" role="dialog" aria-modal="true" aria-label={t("import.title")}>
