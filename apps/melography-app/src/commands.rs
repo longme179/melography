@@ -18,7 +18,7 @@ use melography_color::tone::ToneParams;
 use melography_lut::stage::LutApply;
 use melography_lut::{LutEncoding, LutRecord};
 use melography_presets::sidecar::{
-    Fingerprint, SidecarV1, StageEntry, SuggestionKind, SuggestionSource,
+    Fingerprint, SidecarV1, SuggestionKind, SuggestionSource,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -87,32 +87,11 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
     };
 
     let mut st = state.lock().unwrap();
-    let lut_stack: Vec<LutApply> = sidecar
-        .pipeline
-        .stages
-        .iter()
-        .filter_map(|s| match s {
-            StageEntry::Lut { .. } => <&StageEntry as TryInto<LutApply>>::try_into(s).ok(),
-            StageEntry::FilmIdentity { .. } => None,
-            StageEntry::FilmStock { .. } => None,
-            StageEntry::Tone { .. } => None,
-        })
-        .collect();
-    // M3: resume the tone stage (params + accepted-suggestion provenance).
-    let tone = sidecar
-        .pipeline
-        .stages
-        .iter()
-        .find_map(|s| match s {
-            StageEntry::Tone {
-                params,
-                source,
-                enabled,
-                ..
-            } => Some((if *enabled { Some(*params) } else { None }, source.clone())),
-            _ => None,
-        })
-        .unwrap_or((None, None));
+    // The ONE stage→state path (state.rs `apply_pipeline_stages`) — also
+    // fixes the M2/M3 gap where FilmStock stages were serialized on save
+    // but never applied back on re-open (the film chain silently reset).
+    let stages = sidecar.pipeline.stages.clone();
+    st.apply_pipeline_stages(&stages);
 
     st.session = Some(crate::state::OpenSession {
         source_path: path.clone(),
@@ -122,16 +101,42 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
         ap1,
         fingerprint: fingerprint.clone(),
     });
-    st.lut_stack = lut_stack;
-    st.tone = crate::state::ToneState {
-        params: tone.0,
-        source: tone.1,
-    };
     st.sidecar = Some(sidecar);
     st.sidecar_path = Some(sidecar_path);
     st.dirty = false;
     st.preview_cache = None;
     st.reset_history(); // history belongs to this image's session (M4 #24)
+
+    // S1 Home (issue #23): record the open + refresh the list thumbnail
+    // from the ORIGINAL (a glyph of the photo, not a render of the recipe).
+    // Best-effort — a thumb failure downgrades to the previous one, never
+    // blocks the open.
+    let (sw, sh) = st
+        .session
+        .as_ref()
+        .map(|s| (s.width, s.height))
+        .unwrap_or((0, 0));
+    let thumb = st
+        .session
+        .as_ref()
+        .map(|s| {
+            let f = render::compose_original(&s.ap1, 160);
+            (f.width, f.height, f.rgba)
+        });
+    let lib = st.library_root();
+    let path_str = path.to_string_lossy().into_owned();
+    st.recents.record_open(
+        &lib.join("recents.json"),
+        &lib.join("thumbs"),
+        crate::recents::RecordOpen {
+            path: &path_str,
+            name: &name,
+            width: sw,
+            height: sh,
+            has_recipe: sidecar_loaded,
+            thumb_rgba: thumb.as_ref().map(|(w, h, rgba)| (*w, *h, rgba.as_slice())),
+        },
+    );
 
     Ok(ImageInfo {
         name,
@@ -300,6 +305,12 @@ pub struct StateJson {
     /// Undo availability (M4 #24 — toolbar + keyboard state).
     pub can_undo: bool,
     pub can_redo: bool,
+    /// Current film stock id (null = film chain off) — panel refresh
+    /// after history jumps and preset applies (M4 #23).
+    pub film_stock: Option<String>,
+    /// A recipe referenced a stock id missing from the registry (amber
+    /// badge — never silently skipped, UX_SPEC §9).
+    pub missing_stock: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -371,6 +382,8 @@ fn state_json(st: &crate::state::EditorState) -> StateJson {
         library_count: st.library.list().map(|l| l.len()).unwrap_or(0),
         can_undo: !st.history.is_empty(),
         can_redo: !st.redo.is_empty(),
+        film_stock: st.film.stock.as_ref().map(|p| p.id.clone()),
+        missing_stock: st.missing_stock.clone(),
     }
 }
 
@@ -413,39 +426,14 @@ pub fn save_recipe(state: St) -> Result<(), AppError> {
     };
     // Take the sidecar out of the state while rebuilding its pipeline
     // block from the live stack (+ identity film) — single-owner writes.
-    let stack_snapshot = st.lut_stack.clone();
+    // The stage list comes from `current_stages` — the same serialization
+    // `save_preset` uses, so recipes and presets can never drift.
+    let stages = st.current_stages();
     let mut sc = st
         .sidecar
         .take()
         .ok_or_else(|| AppError::new("session.none", "no sidecar to save"))?;
-    sc.pipeline.stages.clear();
-    let film_snapshot = st.film.clone();
-    let tone_snapshot = st.tone.clone();
-    match &film_snapshot.stock {
-        Some(stock) => sc.pipeline.stages.push(StageEntry::FilmStock {
-            stock: stock.id.clone(),
-            stock_version: stock.profile_version,
-            enabled: film_snapshot.adjustments.enabled,
-            adjustments: film_snapshot.adjustments,
-            lens: film_snapshot.lens,
-            extra: Default::default(),
-        }),
-        None => sc.pipeline.stages.push(StageEntry::FilmIdentity {
-            enabled: true,
-            extra: Default::default(),
-        }),
-    }
-    if let Some(tp) = tone_snapshot.params {
-        sc.pipeline.stages.push(StageEntry::Tone {
-            params: tp,
-            source: tone_snapshot.source.clone(),
-            enabled: true,
-            extra: Default::default(),
-        });
-    }
-    for a in &stack_snapshot {
-        sc.pipeline.stages.push(StageEntry::from(a));
-    }
+    sc.pipeline.stages = stages;
     sc.touch();
     let save_result = sc.save(&path);
     st.sidecar = Some(sc);
@@ -615,6 +603,9 @@ pub struct FilmStateJson {
     pub stock: Option<String>,
     pub enabled: bool,
     pub adjustments: melography_film::Adjustments,
+    /// M4 #23: the Lens panel surface (Vignette / Veiling; CA +
+    /// distortion stay declared-rejected — FILM_MODEL §B honesty).
+    pub lens: melography_film::LensParams,
 }
 
 #[tauri::command]
@@ -624,6 +615,7 @@ pub fn get_film(state: St) -> Result<FilmStateJson, AppError> {
         stock: st.film.stock.as_ref().map(|p| p.id.clone()),
         enabled: st.film.adjustments.enabled,
         adjustments: st.film.adjustments.clone(),
+        lens: st.film.lens,
     })
 }
 
@@ -633,6 +625,9 @@ pub struct SetFilmArgs {
     pub stock: Option<String>,
     #[serde(default)]
     pub adjustments: Option<melography_film::Adjustments>,
+    /// Lens stage (M4 #23): vignette / veiling / fov / σ. Absent = keep.
+    #[serde(default)]
+    pub lens: Option<melography_film::LensParams>,
 }
 
 #[tauri::command]
@@ -658,11 +653,17 @@ pub fn set_film(state: St, args: SetFilmArgs) -> Result<FilmStateJson, AppError>
             .map_err(|e| AppError::new("film.invalid_adjustments", e))?;
         st.film.adjustments = adj;
     }
+    if let Some(lens) = args.lens {
+        lens.validate()
+            .map_err(|e| AppError::new("film.invalid_lens", e))?;
+        st.film.lens = lens;
+    }
     st.dirty = true;
     Ok(FilmStateJson {
         stock: st.film.stock.as_ref().map(|p| p.id.clone()),
         enabled: st.film.adjustments.enabled,
         adjustments: st.film.adjustments.clone(),
+        lens: st.film.lens,
     })
 }
 
@@ -673,15 +674,26 @@ pub struct ToneStateJson {
     /// None = no tone stage (identity).
     pub params: Option<ToneParams>,
     pub source: Option<SuggestionSource>,
+    /// Display estimates for the Color panel's Temp/Tint sliders (the
+    /// parameters stay cone gains — Kelvin is a UI projection;
+    /// `color::tone` documents the round-trip tolerances).
+    pub cct_estimate_k: Option<f32>,
+    pub tint_estimate: Option<f32>,
+}
+
+fn tone_state_json(tone: &crate::state::ToneState) -> ToneStateJson {
+    ToneStateJson {
+        params: tone.params,
+        source: tone.source.clone(),
+        cct_estimate_k: tone.params.as_ref().and_then(|p| p.wb.as_ref()).and_then(melography_color::tone::estimate_cct_k),
+        tint_estimate: tone.params.as_ref().and_then(|p| p.wb.as_ref()).and_then(melography_color::tone::estimate_tint),
+    }
 }
 
 #[tauri::command]
 pub fn get_tone(state: St) -> Result<ToneStateJson, AppError> {
     let st = state.lock().unwrap();
-    Ok(ToneStateJson {
-        params: st.tone.params,
-        source: st.tone.source.clone(),
-    })
+    Ok(tone_state_json(&st.tone))
 }
 
 #[derive(Deserialize)]
@@ -703,10 +715,15 @@ pub fn set_tone(state: St, args: SetToneArgs) -> Result<ToneStateJson, AppError>
         source: args.source,
     };
     st.dirty = true;
-    Ok(ToneStateJson {
-        params: st.tone.params,
-        source: st.tone.source.clone(),
-    })
+    Ok(tone_state_json(&st.tone))
+}
+
+/// Color panel (M4 #23): (Temperature K, Tint −100..100) → WB cone gains
+/// — the UX_SPEC §6 contract, synthesized in Rust so the UI never
+/// reimplements color math (ADR-0001 invariant, parameters included).
+#[tauri::command]
+pub fn wb_from_cct_tint(cct_k: f32, tint: f32) -> melography_color::tone::WbGains {
+    melography_color::tone::gains_from_cct_tint(cct_k, tint)
 }
 
 /// Baseline auto-lighting suggestion (deterministic, model-free — the
@@ -835,3 +852,235 @@ pub fn delete_model(
 // Keep the Path import used (install path strings come from the dialog).
 #[allow(dead_code)]
 fn _path_anchor(_p: &Path) {}
+
+// ─── Settings (M4 #23, UX_SPEC §7 S7) ───────────────────────────────────────
+
+#[tauri::command]
+pub fn get_settings(state: St) -> Result<crate::settings::Settings, AppError> {
+    let st = state.lock().unwrap();
+    Ok(st.settings.clone())
+}
+
+/// Partial update: the payload is the same `Settings` shape, but any
+/// field the UI omits keeps its current value (serde default → sentinel
+/// via `merge`), then the whole document persists durably.
+#[tauri::command]
+pub fn set_settings(
+    state: St,
+    settings: crate::settings::Settings,
+) -> Result<crate::settings::Settings, AppError> {
+    let mut st = state.lock().unwrap();
+    st.settings = settings;
+    st.settings
+        .save(&st.library_root().join("settings.json"))
+        .map_err(|e| AppError::new("settings.save", e.to_string()))?;
+    Ok(st.settings.clone())
+}
+
+// ─── Recents (M4 #23, UX_SPEC §3 S1 Home) ───────────────────────────────────
+
+#[derive(Serialize)]
+pub struct RecentJson {
+    pub path: String,
+    pub name: String,
+    pub last_opened_utc: String,
+    pub width: u32,
+    pub height: u32,
+    pub has_recipe: bool,
+    /// Computed at list time (not stored — files move between runs):
+    /// UX_SPEC §3 "broken file = inline error row".
+    pub missing: bool,
+    /// `thumb://`-style inline data URL the webview can bind directly.
+    pub thumb_data_url: Option<String>,
+}
+
+#[tauri::command]
+pub fn list_recents(state: St) -> Result<Vec<RecentJson>, AppError> {
+    let st = state.lock().unwrap();
+    let thumbs = st.library_root().join("thumbs");
+    Ok(st
+        .recents
+        .entries
+        .iter()
+        .map(|e| {
+            let thumb_data_url = e
+                .thumb
+                .as_ref()
+                .and_then(|n| crate::recents::Recents::thumb_bytes(&thumbs, n))
+                .map(|png| {
+                    let mut url = String::with_capacity(png.len() * 4 / 3 + 32);
+                    url.push_str("data:image/png;base64,");
+                    base64_encode(&png, &mut url);
+                    url
+                });
+            RecentJson {
+                path: e.path.clone(),
+                name: e.name.clone(),
+                last_opened_utc: e.last_opened_utc.clone(),
+                width: e.width,
+                height: e.height,
+                has_recipe: e.has_recipe,
+                missing: !Path::new(&e.path).is_file(),
+                thumb_data_url,
+            }
+        })
+        .collect())
+}
+
+/// Remove recents whose originals are gone (the "clear broken" action;
+/// returns how many were dropped).
+#[tauri::command]
+pub fn purge_recents(state: St) -> Result<u32, AppError> {
+    let mut st = state.lock().unwrap();
+    let store = st.library_root().join("recents.json");
+    let n = st.recents.purge_missing(&store);
+    Ok(n as u32)
+}
+
+/// Tiny standard base64 (no dependency for ~30 lines; encode-only — the
+/// app never decodes). Used for inline thumb data URLs.
+fn base64_encode(data: &[u8], out: &mut String) {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+}
+
+// ─── User presets (M4 #23, UX_SPEC §2 S5 Preset manager) ────────────────────
+
+fn presets_dir(st: &EditorState) -> PathBuf {
+    st.library_root().join("presets")
+}
+
+#[derive(Serialize)]
+pub struct PresetJson {
+    pub id: String,
+    pub name: String,
+    pub created_utc: String,
+    pub modified_utc: String,
+    pub source: String,
+    /// Honest summary line (e.g. "warm-400-negative + tone + 1 LUT") —
+    /// built from the stages, not user-typed marketing.
+    pub summary: String,
+}
+
+fn preset_summary(stages: &[melography_presets::sidecar::StageEntry]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for s in stages {
+        match s {
+            melography_presets::sidecar::StageEntry::FilmStock { stock, .. } => {
+                parts.push(stock.clone())
+            }
+            melography_presets::sidecar::StageEntry::Tone { .. } => parts.push("tone".into()),
+            melography_presets::sidecar::StageEntry::Lut { .. } => parts.push("LUT".into()),
+            melography_presets::sidecar::StageEntry::FilmIdentity { .. } => {}
+        }
+    }
+    if parts.is_empty() {
+        "identity".to_string()
+    } else {
+        parts.join(" + ")
+    }
+}
+
+fn presets_list(st: &EditorState) -> Vec<PresetJson> {
+    crate::user_presets::UserPreset::list(&presets_dir(st))
+        .into_iter()
+        .map(|p| PresetJson {
+            id: p.id,
+            name: p.name,
+            created_utc: p.created_utc,
+            modified_utc: p.modified_utc,
+            source: p.source,
+            summary: preset_summary(&p.stages),
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn list_presets(state: St) -> Result<Vec<PresetJson>, AppError> {
+    let st = state.lock().unwrap();
+    Ok(presets_list(&st))
+}
+
+/// Save the CURRENT recipe as a named preset (S5 "save from current").
+#[tauri::command]
+pub fn save_preset(state: St, name: String) -> Result<PresetJson, AppError> {
+    let name = crate::user_presets::sanitize_name(&name);
+    if name == "preset" || name.trim().is_empty() {
+        return Err(AppError::new("preset.name", "a real name is required"));
+    }
+    let st = state.lock().unwrap();
+    let preset =
+        crate::user_presets::UserPreset::new(&name, st.current_stages()).store_new(&presets_dir(&st));
+    let preset = preset.map_err(|e| AppError::new("preset.save", e.to_string()))?;
+    Ok(PresetJson {
+        id: preset.id,
+        name: preset.name,
+        created_utc: preset.created_utc,
+        modified_utc: preset.modified_utc,
+        source: preset.source,
+        summary: preset_summary(&preset.stages),
+    })
+}
+
+#[tauri::command]
+pub fn rename_preset(
+    state: St,
+    id: String,
+    name: String,
+) -> Result<Vec<PresetJson>, AppError> {
+    let name = crate::user_presets::sanitize_name(&name);
+    let st = state.lock().unwrap();
+    let dir = presets_dir(&st);
+    let mut p = crate::user_presets::UserPreset::find(&dir, &id)
+        .ok_or_else(|| AppError::new("preset.missing", format!("no preset {id:?}")))?;
+    p.name = name;
+    p.modified_utc = melography_presets::utc_now_rfc3339();
+    p.save(&dir)
+        .map_err(|e| AppError::new("preset.save", e.to_string()))?;
+    Ok(presets_list(&st))
+}
+
+#[tauri::command]
+pub fn delete_preset(state: St, id: String) -> Result<Vec<PresetJson>, AppError> {
+    let st = state.lock().unwrap();
+    if !crate::user_presets::UserPreset::delete(&presets_dir(&st), &id) {
+        return Err(AppError::new("preset.missing", format!("no preset {id:?}")));
+    }
+    Ok(presets_list(&st))
+}
+
+/// Apply a preset to the open session (undo-able like every recipe
+/// mutation; the whole preset = one history entry).
+#[tauri::command]
+pub fn apply_preset(state: St, id: String) -> Result<StateJson, AppError> {
+    let mut st = state.lock().unwrap();
+    if st.session.is_none() {
+        return Err(AppError::new("session.none", "open an image first"));
+    }
+    let p = crate::user_presets::UserPreset::find(&presets_dir(&st), &id)
+        .ok_or_else(|| AppError::new("preset.missing", format!("no preset {id:?}")))?;
+    st.push_history(); // one preset = one undo step (M4 #24 semantics)
+    st.apply_pipeline_stages(&p.stages);
+    st.dirty = true;
+    st.preview_cache = None;
+    Ok(state_json(&st))
+}
