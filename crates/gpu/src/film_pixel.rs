@@ -19,7 +19,7 @@
 //! reference and the verdict. Adapter-less environments get an honest
 //! `NoAdapter` error.
 
-use crate::film_pixel_types::{pack, CurveGpu, FilmPixelGpuParams};
+use crate::film_pixel_types::{pack, FilmPixelGpuParams};
 use crate::{AdapterReport, GpuError};
 use wgpu::util::DeviceExt;
 
@@ -191,7 +191,7 @@ pub fn first_adapter_report() -> Option<AdapterReport> {
 /// Run the film pixel kernel on `inputs` (interleaved RGB f32).
 /// Returns the outputs (same layout). No adapter → honest `NoAdapter`.
 pub fn run_film_pixel(params: &FilmPixelGpuParams, inputs: &[f32]) -> Result<Vec<f32>, GpuError> {
-    let packed = pack(params).map_err(|e| GpuError::Wgpu(e))?;
+    let packed = pack(params).map_err(GpuError::Wgpu)?;
     let n = inputs.len() / 3;
     let out_len = n * 3;
     if out_len == 0 {

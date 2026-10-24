@@ -96,9 +96,8 @@ fn film_pixel_gpu_parity() {
             melography_gpu::film_pixel::run_film_pixel(&gpu_params, &inputs).expect("gpu dispatch");
 
         let mut worst = 0.0f64;
-        for i in 0..inputs.len() {
-            let d = (f64::from(cpu.data()[i]) - f64::from(gpu[i])).abs();
-            worst = worst.max(d);
+        for (c, g) in cpu.data().iter().zip(&gpu) {
+            worst = worst.max((f64::from(*c) - f64::from(*g)).abs());
         }
         eprintln!("{name}: worst |Δ| = {worst:.3e}");
         assert!(
