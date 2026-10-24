@@ -288,6 +288,57 @@ const en: Dict = {
   "error.code.io.disk_full": "The disk is full.",
   "error.code.io.permission": "Permission denied writing the output.",
   "error.code.stock.missing": "A stock profile is missing from this build.",
+  "error.code.color.transform": "The display color transform failed.",
+  "error.code.film.invalid_adjustments": "The film adjustments are invalid.",
+  "error.code.film.invalid_lens": "The lens settings are invalid.",
+  "error.code.film.unknown_stock": "That film stock is unknown to this build.",
+  "error.code.io.write": "Writing the file failed.",
+  "error.code.lut.library_io": "Reading the LUT library folder failed.",
+  "error.code.lut.unsupported": "This LUT format or size is not supported.",
+  "error.code.model.delete": "Deleting the model failed.",
+  "error.code.model.install": "Installing the model failed.",
+  "error.code.model.manifest_parse": "The model manifest is malformed.",
+  "error.code.model.manifest_read": "Reading the model manifest failed.",
+  "error.code.param.invalid": "A parameter value is out of range.",
+  "error.code.preset.name": "That preset name is not allowed.",
+  "error.code.preset.save": "Saving the preset failed.",
+  "error.code.recipe.io": "Reading or writing the recipe sidecar failed.",
+  "error.code.session.history": "Nothing to undo or redo.",
+  "error.code.settings.save": "Saving the settings failed.",
+
+  // ── Session 09 (#15): film panel + stock browser — zero embedded strings ──
+  "film.stock": "Stock",
+  "film.none": "— none (identity) —",
+  "film.ev": "EV",
+  "film.ev.tip": "Exposure compensation at the film stage (before the film curves; distinct from the Basic panel's EV).",
+  "film.pushPull": "Push/pull",
+  "film.pushPull.tip": "Development push/pull in stops — a push develops longer (denser, rougher grain), a pull develops shorter (thinner, cleaner).",
+  "film.devContrast": "Dev contrast",
+  "film.devContrast.tip": "Gamma of the development stage — above 1.0 widens midtone separation.",
+  "film.printExposure": "Print exposure",
+  "film.printExposure.tip": "Exposure of the print/scan second stage, in stops.",
+  "film.chainEnabled": "Film chain enabled",
+  "film.hint": "Select a stock to enable the film chain. Export and sidecar record the stock by id (data, not code); artist-authored stocks carry no measured calibration — the honesty line follows the look everywhere.",
+  "stock.title": "Film stocks",
+  "stock.browser": "Film stock browser",
+  "stock.empty": "No stocks found (registry directory missing or empty — see MELOGRAPHY_PROFILES). The film chain stays disabled rather than pretending.",
+  "common.close": "Close",
+  "stock.provenance.ArtistAuthored": "artist-authored — no measured calibration",
+  "stock.provenance.Measured": "measured calibration",
+  "stock.confidence.Low": "low confidence",
+  "stock.confidence.Medium": "medium confidence",
+  "stock.confidence.High": "high confidence",
+  "stock.polarity.Negative": "negative",
+  "stock.polarity.Reversal": "reversal",
+  "stock.layers.Monochrome": "mono",
+  "stock.layers.Color": "color",
+  "stock.path.paper": "paper",
+  "stock.path.scanner": "scanner",
+  "settings.loglevel.error": "error",
+  "settings.loglevel.warn": "warn",
+  "settings.loglevel.info": "info",
+  "settings.loglevel.debug": "debug",
+  "viewport.renderDone": "Rendered in {ms} ms",
 
 };
 
@@ -571,10 +622,84 @@ const vi: Dict = {
   "error.code.io.disk_full": "Ổ đĩa hết chỗ.",
   "error.code.io.permission": "Không có quyền ghi file xuất.",
   "error.code.stock.missing": "Thiếu hồ sơ phóng trong bản build này.",
+  "error.code.color.transform": "Chuyển đổi màu hiển thị thất bại.",
+  "error.code.film.invalid_adjustments": "Các điều chỉnh phim không hợp lệ.",
+  "error.code.film.invalid_lens": "Cài đặt ống kính không hợp lệ.",
+  "error.code.film.unknown_stock": "Không nhận dạng được loại phim trong bản build này.",
+  "error.code.io.write": "Ghi file thất bại.",
+  "error.code.lut.library_io": "Đọc thư mục thư viện LUT thất bại.",
+  "error.code.lut.unsupported": "Định dạng hoặc kích thước LUT này không được hỗ trợ.",
+  "error.code.model.delete": "Xóa mô hình thất bại.",
+  "error.code.model.install": "Cài đặt mô hình thất bại.",
+  "error.code.model.manifest_parse": "Manifest mô hình sai định dạng.",
+  "error.code.model.manifest_read": "Đọc manifest mô hình thất bại.",
+  "error.code.param.invalid": "Giá trị tham số ngoài phạm vi cho phép.",
+  "error.code.preset.name": "Tên preset đó không được chấp nhận.",
+  "error.code.preset.save": "Lưu preset thất bại.",
+  "error.code.recipe.io": "Đọc/ghi sidecar công thức thất bại.",
+  "error.code.session.history": "Không còn gì để hoàn tác hoặc làm lại.",
+  "error.code.settings.save": "Lưu cài đặt thất bại.",
+
+  // ── Session 09 (#15): film panel + stock browser — zero embedded strings ──
+  "film.stock": "Phim",
+  "film.none": "— không (nguyên bản) —",
+  "film.ev": "EV",
+  "film.ev.tip": "Bù phơi sáng ở khâu phim (trước các đường cong phim; khác với EV ở bảng Cơ bản).",
+  "film.pushPull": "Push/pull (dựng/kéo)",
+  "film.pushPull.tip": "Dựng/kéo khi rửa phim, tính theo stop — push rửa lâu hơn (đặc hơn, hạt thô hơn), pull rửa ngắn hơn (mỏng hơn, sạch hơn).",
+  "film.devContrast": "Tương phản rửa",
+  "film.devContrast.tip": "Gamma của khâu rửa — trên 1,0 mở rộng tách biệt vùng giữa.",
+  "film.printExposure": "Phơi khi in",
+  "film.printExposure.tip": "Phơi sáng của khâu in/quét (giai đoạn thứ hai), tính theo stop.",
+  "film.chainEnabled": "Bật chuỗi phim",
+  "film.hint": "Chọn một loại phim để bật chuỗi phim. Xuất ảnh và sidecar ghi phim theo id (dữ liệu, không phải mã); phim do tác giả sáng tác không kèm hiệu chuẩn đo lường — ghi chú trung thực luôn đi theo hình ảnh.",
+  "stock.title": "Các loại phim",
+  "stock.browser": "Trình duyệt phim",
+  "stock.empty": "Không tìm thấy phim (thư mục registry thiếu hoặc rỗng — xem MELOGRAPHY_PROFILES). Chuỗi phim tắt thay vì giả vờ.",
+  "common.close": "Đóng",
+  "stock.provenance.ArtistAuthored": "tác giả sáng tác — không hiệu chuẩn đo lường",
+  "stock.provenance.Measured": "hiệu chuẩn đo lường",
+  "stock.confidence.Low": "độ tin cậy thấp",
+  "stock.confidence.Medium": "độ tin cậy trung bình",
+  "stock.confidence.High": "độ tin cậy cao",
+  "stock.polarity.Negative": "âm bản",
+  "stock.polarity.Reversal": "đảo chiều",
+  "stock.layers.Monochrome": "đơn sắc",
+  "stock.layers.Color": "màu",
+  "stock.path.paper": "giấy",
+  "stock.path.scanner": "máy quét",
+  "settings.loglevel.error": "lỗi",
+  "settings.loglevel.warn": "cảnh báo",
+  "settings.loglevel.info": "thông tin",
+  "settings.loglevel.debug": "gỡ lỗi",
+  "viewport.renderDone": "Đã kết xuất trong {ms} ms",
 
 };
 
 const catalogs: Record<Lang, Dict> = { en, vi };
+
+// ── Pseudo-locale mode (UX_SPEC §10, issue #15) ──────────────────────────
+// `vite build --mode pseudo` sets MODE=pseudo: every catalog string is
+// wrapped, accented and padded (~40% longer) so a CI build proves the UI
+// compiles and renders with maximal-length diacritic strings (the classic
+// truncation/overflow detector). Placeholders `{x}` are left intact.
+const PSEUDO = import.meta.env.MODE === "pseudo";
+
+function pseudoWrap(s: string): string {
+  const accented = s.replace(/[aeiou](?![^{}]*\})/g, (c) =>
+    c === "a" ? "á" : c === "e" ? "é" : c === "i" ? "í" : c === "o" ? "ó" : "ú",
+  );
+  // Proportional padding: EVERY string grows ≥ 40% (fixed padding would
+  // under-stress long sentences).
+  const pad = "Ẋ".repeat(Math.max(3, Math.ceil(s.length * 0.4)));
+  return `[̃ ${accented} ${pad}]`;
+}
+
+if (PSEUDO) {
+  for (const dict of [en, vi]) {
+    for (const k of Object.keys(dict)) dict[k] = pseudoWrap(dict[k]);
+  }
+}
 
 /** Reactive language (S4/M4: settings + panel re-render on switch —
  * wrap translated regions in `{#key $locale}`). */
@@ -595,6 +720,27 @@ export function t(key: string, params?: Record<string, string | number>): string
     }
   }
   return s;
+}
+
+/** Localized display of a backend enum value (e.g. provenance
+ * "ArtistAuthored", polarity "Reversal", path "paper"): looks up
+ * `<prefix>.<value>`; unknown values fall back to the raw token —
+ * data-driven enums must never crash or show a raw i18n key. */
+export function tEnum(prefix: string, value: string): string {
+  const key = `${prefix}.${value}`;
+  const hit = catalogs[currentLang][key] ?? catalogs.en[key];
+  return hit ?? value;
+}
+
+/** Locale-aware number display (UX_SPEC §10: VI uses the comma decimal
+ * separator). `signed` prefixes "+" for non-negative values (EV-style). */
+export function fmtNum(v: number, digits = 0, signed = false): string {
+  const loc = currentLang === "vi" ? "vi-VN" : "en-US";
+  const n = v.toLocaleString(loc, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  return signed && v > 0 ? `+${n}` : n;
 }
 
 /** Localized guidance for a Rust error code (error.rs taxonomy). */

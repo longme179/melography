@@ -89,6 +89,12 @@
   onMount(refresh);
   $: if (open) refresh();
 
+  // Esc via the window (#15 a11y); backdrop-click dismiss removed on
+  // purpose (accidental dismissal > one extra click to close).
+  function onWindowKey(e: KeyboardEvent) {
+    if (open && e.key === "Escape") open = false;
+  }
+
   function focus(node: HTMLInputElement) {
     node.focus();
     node.select();
@@ -96,15 +102,14 @@
   }
 </script>
 
+<svelte:window on:keydown={onWindowKey} />
+
 {#if open}
-  <div class="overlay" role="dialog" aria-modal="true" aria-label={t("presets.title")}
-    on:click|self={() => (open = false)}
-    on:keydown={(e) => e.key === "Escape" && (open = false)}
-  >
+  <div class="overlay" role="dialog" aria-modal="true" aria-label={t("presets.title")}>
     <div class="sheet" tabindex="-1">
       <div class="head">
         <h2>{t("presets.title")}</h2>
-        <button class="close" on:click={() => (open = false)} aria-label="✕">✕</button>
+        <button class="close" on:click={() => (open = false)} aria-label={t("common.close")}>✕</button>
       </div>
 
       <div class="save-row">

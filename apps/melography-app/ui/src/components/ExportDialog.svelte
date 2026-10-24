@@ -13,6 +13,12 @@
   export let sourcePath: string | null = null;
   export let onDone: () => void = () => {};
 
+  // Esc closes the dialog (#15 a11y — every dialog is keyboard-dismissable;
+  // never while an export is in flight).
+  function onWindowKey(e: KeyboardEvent) {
+    if (open && !busy && e.key === "Escape") open = false;
+  }
+
   let format = "png";
   let depth = 16;
   let quality = 92;
@@ -69,6 +75,8 @@
     }
   }
 </script>
+
+<svelte:window on:keydown={onWindowKey} />
 
 {#if open}
   <div class="overlay" role="dialog" aria-modal="true" aria-label={t("export.title")}>

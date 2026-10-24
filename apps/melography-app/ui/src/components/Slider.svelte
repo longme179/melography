@@ -155,6 +155,9 @@
     padding: 2px 4px;
     color: var(--fg-primary);
     cursor: text;
+    /* Exempt from the global 32px touch-target floor: this is the value
+       readout (click-to-type); the slider row itself is the target. */
+    min-height: 0;
   }
   .val.neutral {
     color: var(--fg-tertiary);

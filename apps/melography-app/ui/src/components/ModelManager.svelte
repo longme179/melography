@@ -10,7 +10,7 @@
     manifestFileDialog,
     weightsFileDialog,
   } from "../lib/ipc";
-  import { t } from "../lib/i18n";
+  import { t, fmtNum } from "../lib/i18n";
   import { models, toast, type ModelState } from "../lib/stores";
 
   let busy = false;
@@ -73,8 +73,9 @@
   }
 
   function fmtSize(bytes: number): string {
-    if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-    return `${(bytes / 1024).toFixed(1)} kB`;
+    // Locale-aware decimal separator (VI = comma) — UX_SPEC §10, #15.
+    if (bytes >= 1024 * 1024) return `${fmtNum(bytes / 1024 / 1024, 1)} MB`;
+    return `${fmtNum(bytes / 1024, 1)} kB`;
   }
 
   refresh();

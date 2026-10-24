@@ -100,46 +100,45 @@
       </div>
       <ul role="list">
         {#each $recents as r (r.path)}
-          <li
-            class="recent"
-            class:missing={r.missing}
-            role="button"
-            tabindex="0"
-            aria-disabled={r.missing}
-            on:click={() => open(r)}
-            on:keydown={(e) => {
-              if (e.key === "Enter" || e.key === " ") open(r);
-            }}
-          >
-            <img
-              class="thumb"
-              src={r.thumb_data_url ?? ""}
-              alt=""
-              width="48"
-              height="48"
-              loading="lazy"
-            />
-            <div class="meta">
-              <span class="name">{r.name}</span>
-              <span class="path mono">{r.path}</span>
-              <span class="line">
-                {#if r.missing}
-                  <span class="err">⚠ {t("home.missing")}</span>
-                {:else}
-                  {#if r.width}
-                    <span class="mono">{r.width}×{r.height}</span>
-                    <span>·</span>
+          <!-- Real <button> inside the li (#15 a11y: a li may not carry
+               role=button; native buttons bring keyboard + focus free). -->
+          <li class="recent-row" class:missing={r.missing}>
+            <button
+              class="recent"
+              aria-disabled={r.missing}
+              aria-label={r.missing ? `${r.name} — ${t("home.missing")}` : r.name}
+              on:click={() => open(r)}
+            >
+              <img
+                class="thumb"
+                src={r.thumb_data_url ?? ""}
+                alt=""
+                width="48"
+                height="48"
+                loading="lazy"
+              />
+              <div class="meta">
+                <span class="name">{r.name}</span>
+                <span class="path mono">{r.path}</span>
+                <span class="line">
+                  {#if r.missing}
+                    <span class="err">⚠ {t("home.missing")}</span>
+                  {:else}
+                    {#if r.width}
+                      <span class="mono">{r.width}×{r.height}</span>
+                      <span>·</span>
+                    {/if}
+                    <span class={r.has_recipe ? "has-recipe" : ""}>
+                      {r.has_recipe ? t("home.recipe") : t("home.noRecipe")}
+                    </span>
+                    {#if r.last_opened_utc}
+                      <span>·</span>
+                      <span>{t("home.lastOpened")} {fmtDate(r.last_opened_utc)}</span>
+                    {/if}
                   {/if}
-                  <span class={r.has_recipe ? "has-recipe" : ""}>
-                    {r.has_recipe ? t("home.recipe") : t("home.noRecipe")}
-                  </span>
-                  {#if r.last_opened_utc}
-                    <span>·</span>
-                    <span>{t("home.lastOpened")} {fmtDate(r.last_opened_utc)}</span>
-                  {/if}
-                {/if}
-              </span>
-            </div>
+                </span>
+              </div>
+            </button>
           </li>
         {/each}
       </ul>
@@ -238,8 +237,19 @@
     flex-direction: column;
     gap: var(--space-2);
   }
+  .recent-row {
+    display: block;
+  }
+  .recent-row.missing .recent {
+    cursor: default;
+    opacity: 0.7;
+    border-style: dashed;
+    border-color: var(--danger);
+  }
   .recent {
     display: flex;
+    width: 100%;
+    text-align: left;
     gap: var(--space-3);
     align-items: center;
     padding: var(--space-2) var(--space-3);
@@ -247,16 +257,12 @@
     border-radius: 8px;
     cursor: pointer;
     background: var(--bg-panel);
+    font: inherit;
+    color: inherit;
   }
-  .recent:hover:not(.missing),
-  .recent:focus-visible:not(.missing) {
+  .recent-row:not(.missing) .recent:hover,
+  .recent-row:not(.missing) .recent:focus-visible {
     background: var(--bg-hover);
-  }
-  .recent.missing {
-    cursor: default;
-    opacity: 0.7;
-    border-style: dashed;
-    border-color: var(--danger);
   }
   .thumb {
     width: 48px;

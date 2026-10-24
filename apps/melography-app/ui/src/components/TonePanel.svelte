@@ -9,7 +9,7 @@
     setTone,
     suggestionProvenance,
   } from "../lib/ipc";
-  import { t } from "../lib/i18n";
+  import { t, fmtNum } from "../lib/i18n";
   import { suggestion, tone, toast, type ToneParams } from "../lib/stores";
 
   export let onChange: () => void = () => {};
@@ -92,7 +92,8 @@
   }
 
   function fmt(v: number, digits = 2): string {
-    return (v >= 0 ? "+" : "") + v.toFixed(digits);
+    // Locale-aware decimal separator (VI = comma) — UX_SPEC §10, #15.
+    return fmtNum(v, digits, true);
   }
 
   function noteKey(n: string): string {
@@ -213,35 +214,10 @@
     font-size: 11px;
     color: var(--fg-tertiary);
   }
-  .row {
-    display: grid;
-    grid-template-columns: 76px 1fr 52px;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: 13px;
-    margin: var(--space-1) 0;
-  }
-  .row.sub {
-    grid-template-columns: 76px 1fr 52px;
-    padding-left: var(--space-2);
-  }
-  .val {
-    text-align: right;
-    font-size: 11px;
-  }
   .hint {
     font-size: 12px;
     color: var(--fg-tertiary);
     margin: var(--space-1) 0 0;
-  }
-  button.primary {
-    background: var(--accent, #7aa2f7);
-    color: #10121a;
-    border: none;
-    border-radius: 6px;
-    padding: 4px 10px;
-    cursor: pointer;
-    font-size: 12px;
   }
   button {
     background: transparent;

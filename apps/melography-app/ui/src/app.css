@@ -9,7 +9,9 @@
   --bg-active: #2b3036;
   --fg-primary: #e7e9ec;
   --fg-secondary: #a6adb4;
-  --fg-tertiary: #7a8188;
+  /* #82898f: fg-tertiary passes 4.5+ on panel AND elevated (contrast
+     audit #15 — the old #7a8188 sat at 4.51/4.14, zero headroom). */
+  --fg-tertiary: #82898f;
   --fg-disabled: #565c63;
   --stroke-subtle: #23262a;
   --stroke-strong: #34383e;
@@ -35,11 +37,16 @@ body {
   font: 400 13.5px/1.5 var(--font-ui);
   user-select: none;
   overflow: hidden;
+  /* VI long words / pseudo-locale padding must wrap, never overflow
+     (UX_SPEC §10 diacritics+length; #15). */
+  overflow-wrap: break-word;
 }
 button {
   font: inherit; color: inherit; background: var(--bg-elevated);
   border: 1px solid var(--stroke-subtle); border-radius: var(--radius);
   padding: 6px 12px; cursor: pointer;
+  /* UX_SPEC §10: min touch target 32px (#15). */
+  min-height: 32px;
 }
 button:hover:not(:disabled) { background: var(--bg-hover); }
 button:focus-visible, [tabindex]:focus-visible, input:focus-visible, select:focus-visible {
@@ -50,7 +57,9 @@ button.primary { background: var(--accent-500); border-color: var(--accent-500);
 button.primary:hover:not(:disabled) { background: var(--accent-400); }
 select, input[type="text"], input[type="number"] {
   font: inherit; color: var(--fg-primary); background: var(--bg-elevated);
-  border: 1px solid var(--stroke-subtle); border-radius: var(--radius); padding: 4px 8px;
+  border: 1px solid var(--stroke-subtle); border-radius: var(--radius); padding: 6px 8px;
+  /* UX_SPEC §10: min touch target 32px (#15). */
+  min-height: 32px;
 }
 input[type="range"] { accent-color: var(--accent-400); }
 .badge {
@@ -88,12 +97,16 @@ input[type="range"] { accent-color: var(--accent-400); }
   --bg-active: #d8d8dc;
   --fg-primary: #1b1c1e;
   --fg-secondary: #4a4d52;
-  --fg-tertiary: #6b6f76;
+  /* #61656c: fg-tertiary ≥ 4.5 on panel AND elevated/hover surfaces
+     (contrast audit #15 — the old #6b6f76 was 4.28 on bg-elevated). */
+  --fg-tertiary: #61656c;
   --fg-disabled: #a2a6ac;
   --stroke-subtle: #dcdce0;
   --stroke-strong: #c2c3c9;
+  /* #aa7a20: primary-button fill must carry the dark ink label at AA
+     (contrast audit #15 — the old #96650e was 3.65 < 4.5). */
   --accent-400: #b07414;
-  --accent-500: #96650e;
+  --accent-500: #aa7a20;
   --accent-emph: #7a4f06;
   --ok: #1e7d4f;
   --info: #1f6c86;
@@ -140,11 +153,12 @@ input[type="range"] { accent-color: var(--accent-400); }
 }
 .rail-tabs button {
   font-size: 11px;
-  padding: 4px 8px;
+  padding: 6px 9px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--fg-secondary);
+  min-height: 32px;
 }
 .rail-tabs button[aria-selected="true"] {
   background: var(--bg-active);
@@ -204,4 +218,17 @@ input[type="range"] { accent-color: var(--accent-400); }
   font-size: 11px;
   color: var(--fg-tertiary);
   white-space: nowrap;
+}
+
+/* ── Reduced motion (UX_SPEC §10, #15): no animation autoplay exists by
+ *    design (compare is a manual toggle); this belt-and-braces rule kills
+ *    any residual transition when the OS asks for reduced motion. ───── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

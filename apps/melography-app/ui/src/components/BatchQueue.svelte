@@ -75,7 +75,10 @@
           m: $batchJobs.length,
         });
 
-  const mbFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
+  // Locale-aware (VI = comma decimals) — UX_SPEC §10, #15; follows live language.
+  $: mbFmt = new Intl.NumberFormat($locale === "vi" ? "vi-VN" : "en-US", {
+    maximumFractionDigits: 1,
+  });
 
   /** Lazy thumbs: every row without a cached one asks Rust once (the
    * backend caches the PNG — repeated opens are instant). */

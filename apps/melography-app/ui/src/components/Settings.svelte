@@ -50,7 +50,16 @@
   onMount(refresh);
   $: if (open) refresh();
   $: locale; // re-render translated labels on language switch
+
+  // Esc via the window (#15 a11y): works regardless of what holds focus.
+  // Backdrop-click dismiss was REMOVED on purpose — accidental dismissal
+  // of an unsaved settings draft is the worse failure (UX_SPEC §9).
+  function onWindowKey(e: KeyboardEvent) {
+    if (open && e.key === "Escape") open = false;
+  }
 </script>
+
+<svelte:window on:keydown={onWindowKey} />
 
 {#if open}
   <div
@@ -58,13 +67,11 @@
     role="dialog"
     aria-modal="true"
     aria-label={t("settings.title")}
-    on:click|self={() => (open = false)}
-    on:keydown={(e) => e.key === "Escape" && (open = false)}
   >
     <div class="sheet" tabindex="-1">
       <div class="head">
         <h2>{t("settings.title")}</h2>
-        <button class="close" on:click={() => (open = false)} aria-label="✕">✕</button>
+        <button class="close" on:click={() => (open = false)} aria-label={t("common.close")}>✕</button>
       </div>
 
       {#if draft}
@@ -158,17 +165,17 @@
           <h3>{t("settings.advanced")}</h3>
           <label class="row">
             <span>{t("settings.logLevel")}</span>
-            <select value={field("log_level")} on:change={(e) => setField("log_level", e.currentTarget.value)}>
-              <option value="error">error</option>
-              <option value="warn">warn</option>
-              <option value="info">info</option>
-              <option value="debug">debug</option>
+            <select value={field("log_level")} on:change={(e) => setField("log_level", e.currentTarget.value)} aria-label={t("settings.logLevel")}>
+              <option value="error">{t("settings.loglevel.error")}</option>
+              <option value="warn">{t("settings.loglevel.warn")}</option>
+              <option value="info">{t("settings.loglevel.info")}</option>
+              <option value="debug">{t("settings.loglevel.debug")}</option>
             </select>
           </label>
-          <label class="row">
+          <div class="row">
             <span>{t("settings.cacheLocation")}</span>
             <span class="mono value">~/.melography</span>
-          </label>
+          </div>
         </section>
 
         <div class="actions">
