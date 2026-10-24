@@ -265,7 +265,8 @@ pub fn run_lut3d(
     out_readback.unmap();
 
     let ms = start.elapsed().as_secs_f64() * 1000.0;
-    let out: Vec<[f32; 3]> = floats.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let (chunks, _) = floats.as_chunks::<3>();
+    let out: Vec<[f32; 3]> = chunks.to_vec();
     assert_eq!(out.len(), samples.len());
     Ok((
         out,
