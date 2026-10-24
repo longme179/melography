@@ -47,3 +47,23 @@ identity invariants · neutral ramps · domain transforms · 1D+3D chains · mal
 - RawTherapee: Hald CLUT identity-check heuristic + the lesson to *not* treat a LUT as the whole film chain.
 - darktable: UI pattern for LUT intensity/mix + clipping warnings.
 - No code copied in Phase 0; M1 implementations are ours under GPL-3.0 with attribution where a specific routine's logic was studied.
+
+## 7. Implementation status (M1, 2026-10-24)
+
+Implemented on `agent/m1-lut-workflow` (see crates/lut + tools/lut_oracle.py):
+
+- §1 `.cube` parser: **done** (token-stream, strict, line-attributed; fuzz
+  corpus 30 files + 3000 seeded mutations). `.3dl`/Hald remain future work
+  exactly per §1's dialect-selector decision.
+- §2 tetrahedral + 1D shaper: **done** (CPU oracle + WGSL mirror, parity
+  ≤1e-6, identity invariant 1e-6 property-tested; boundary clamp reported).
+- §3 encoding contract: **done** for the vocabulary subset
+  {srgb-display, rec709-display-linear, rec709-gamma2.4, display-p3-display,
+  acescct, acescc}; `agx-log` + `custom-1d-shaper` parse/serialize but
+  refuse to apply (explicit error, UI shows "coming soon"). ACEScc/ACEScct
+  applied on AP1 values (documented convention — encoding.rs header).
+- §4 library: **done** (SHA-256 content-addressed blobs, provenance index,
+  atomic index writes, checksum re-verified at load, Missing/Checksum/
+  Corrupt explicit states; sidecars reference by hash — sidecar v1).
+- §5 test matrix: all rows green locally; GPU parity + 3-OS legs run in CI
+  on the branch (first run pending at time of writing).
