@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 melography-core = { workspace = true }
+melography-lut = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

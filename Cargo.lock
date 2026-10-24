@@ -926,6 +926,7 @@ name = "melography-presets"
 version = "0.0.1"
 dependencies = [
  "melography-core",
+ "melography-lut",
  "serde",
  "serde_json",
  "sha2",
