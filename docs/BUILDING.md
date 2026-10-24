@@ -10,6 +10,18 @@ scripts automate them per platform. All three build the Tauri 2 editor app
 (`apps/melography-app`) with the pinned Rust toolchain and the committed
 UI lockfile, then list the artifacts with checksums.
 
+## Invocation directory matters (by-hand builds)
+
+On startup the Tauri CLI resolves two directories: the **Tauri dir** — the
+folder holding `tauri.conf.json`, `apps/melography-app` in this repo — and
+the **frontend dir** — the nearest `package.json`, `apps/melography-app/ui`.
+The `beforeBuildCommand`/`beforeDevCommand` hooks run **in the frontend
+dir**, and `frontendDist` is relative to the **Tauri dir** (`ui/dist`).
+That is why every script (and the README) invokes `tauri build`/`tauri dev`
+from `apps/melography-app`: from the repo root the CLI cannot see
+`ui/package.json` within its search depth and falls back to the wrong
+frontend dir (first symptom: `npm error path …/ui/ui/package.json`).
+
 ## Linux — `scripts/build/build-linux.sh`
 
 Supports the three distro families CI and the README cover: **Ubuntu/Debian**
