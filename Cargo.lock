@@ -837,11 +837,13 @@ dependencies = [
 name = "melography-cli"
 version = "0.0.1"
 dependencies = [
+ "bytemuck",
  "clap",
  "melography-color",
  "melography-core",
  "melography-film",
  "melography-io",
+ "melography-lut",
  "melography-presets",
  "serde",
  "serde_json",

@@ -135,6 +135,14 @@ pub fn synthetic_chart_u16() -> (u32, u32, Vec<u16>) {
     (chart.width(), chart.height(), px)
 }
 
+/// 8-bit variant of [`synthetic_chart_u16`] (JPEG export path tests).
+#[must_use]
+pub fn synthetic_chart_u8() -> (u32, u32, Vec<u8>) {
+    let (w, h, px16) = synthetic_chart_u16();
+    let px8: Vec<u8> = px16.iter().map(|&v| (v >> 8) as u8).collect();
+    (w, h, px8)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

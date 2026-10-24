@@ -18,7 +18,9 @@ melography-color = { workspace = true }
 melography-io = { workspace = true }
 melography-film = { workspace = true }
 melography-presets = { workspace = true }
+melography-lut = { workspace = true }
+sha2 = { workspace = true }
+bytemuck = "1"
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
