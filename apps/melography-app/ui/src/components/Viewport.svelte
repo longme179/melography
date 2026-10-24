@@ -28,6 +28,9 @@
   let draggingDivider = false;
   let splitX = 0.5;
   let scale = 1;
+  let lastFit = 1; // fit-scale at the current window size (100% = 1/lastFit)
+  let loupeZoom = false; // hold-Z: temporary 100% (UX_SPEC §8)
+  let zoomBeforeLoupe = 1;
 
   $: if (imageOpen) {
     refresh();
@@ -79,7 +82,9 @@
     const cw = container.clientWidth;
     const ch = container.clientHeight;
     const fit = Math.min(cw / edited.width, ch / edited.height);
-    scale = fit * $zoom;
+    lastFit = fit;
+    const activeZoom = loupeZoom ? 1 / lastFit : $zoom;
+    scale = fit * activeZoom;
     const w = edited.width * scale;
     const h = edited.height * scale;
     canvas.style.width = `${w}px`;
@@ -101,6 +106,29 @@
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
     zoom.update((z) => Math.min(8, Math.max(0.05, z * factor)));
+    layout();
+  }
+
+  // ── Zoom API (M4 #23 keyboard map + toolbar; exact, no sentinels) ───
+  /** Absolute zoom as a scale factor (1 = fit). */
+  export function setZoomScale(s: number) {
+    zoom.set(s);
+    layout();
+  }
+
+  /** Relative zoom (× factor, clamped). */
+  export function zoomBy(f: number) {
+    zoom.update((z) => Math.min(8, Math.max(0.05, z * f)));
+    layout();
+  }
+
+  /** Pixel-exact percentage: 1 = 100% (one canvas px == one screen px). */
+  export function zoomPercent(p: number) {
+    if (p <= 0) {
+      zoom.set(1); // fit
+    } else {
+      zoom.set(p / Math.max(lastFit, 1e-6));
+    }
     layout();
   }
 
@@ -141,12 +169,23 @@
     if (e.key === "b" || e.key === "B") {
       showOriginal = true;
       blit();
+    } else if (e.key === "z" || e.key === "Z") {
+      // Hold-Z 100% loupe (UX_SPEC §8): temporary pixel-exact view.
+      if (!loupeZoom) {
+        loupeZoom = true;
+        zoomBeforeLoupe = $zoom;
+        layout();
+      }
     }
   }
   function onKeyUp(e: KeyboardEvent) {
     if (e.key === "b" || e.key === "B") {
       showOriginal = false;
       blit();
+    } else if (e.key === "z" || e.key === "Z") {
+      loupeZoom = false;
+      zoom.set(zoomBeforeLoupe);
+      layout();
     }
   }
 
@@ -199,9 +238,9 @@
     <div class="status mono">
       <span>{renderMs.toFixed(1)} ms {t("viewport.renderMs")}</span>
       <span>·</span>
-      <span>{Math.round($zoom * 100)}%</span>
+      <span>{Math.round($zoom * 100)}%{loupeZoom ? " · " + t("viewport.loupe") : ""}</span>
       <span aria-hidden="true">·</span>
-      <span class="hint">{t("viewport.holdB")}</span>
+      <span class="hint">{t("viewport.holdB")} · Z 100%</span>
     </div>
   {/if}
 </div>

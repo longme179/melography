@@ -133,8 +133,8 @@ mod tests {
         let s = Settings {
             language: "vi".into(),
             theme: "contrast".into(),
-            preview_max_dim: 9999,   // out of range → 2560
-            cache_budget_mb: 1,      // out of range → 64
+            preview_max_dim: 9999, // out of range → 2560
+            cache_budget_mb: 1,    // out of range → 64
             update_channel: "beta".into(),
             ..Settings::default()
         };

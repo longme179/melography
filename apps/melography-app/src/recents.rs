@@ -94,12 +94,10 @@ impl Recents {
             width: e.width,
             height: e.height,
             has_recipe: e.has_recipe,
-            thumb: e
-                .thumb_rgba
-                .and_then(|(w, h, rgba)| {
-                    let fname = thumb_name(e.path);
-                    write_thumb(thumbs_dir, &fname, w, h, rgba).then_some(fname)
-                }),
+            thumb: e.thumb_rgba.and_then(|(w, h, rgba)| {
+                let fname = thumb_name(e.path);
+                write_thumb(thumbs_dir, &fname, w, h, rgba).then_some(fname)
+            }),
         };
         self.entries.insert(0, entry);
         self.entries.truncate(RECENTS_LIMIT);

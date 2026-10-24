@@ -362,10 +362,7 @@ pub fn estimate_tint(gains: &WbGains) -> Option<f32> {
         return None;
     }
     let (px, py) = (xyz[0] / sum, xyz[1] / sum);
-    let cct = crate::spaces::cct_from_chromaticity(crate::spaces::Chromaticity {
-        x: px,
-        y: py,
-    })?;
+    let cct = crate::spaces::cct_from_chromaticity(crate::spaces::Chromaticity { x: px, y: py })?;
     let (lx, ly) = planckian_locus_xy(cct);
     let (nx, ny) = isothermal_normal(cct);
     let dot = (px - lx) * nx + (py - ly) * ny;
@@ -862,10 +859,7 @@ mod tests {
         for tint in [-80.0_f32, -30.0, 0.0, 30.0, 80.0] {
             let g = gains_from_cct_tint(5500.0, tint);
             let est = estimate_tint(&g).expect("tint estimate");
-            assert!(
-                (est - tint).abs() < 8.0,
-                "tint {tint} → est {est}"
-            );
+            assert!((est - tint).abs() < 8.0, "tint {tint} → est {est}");
         }
     }
 

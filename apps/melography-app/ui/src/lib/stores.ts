@@ -14,6 +14,8 @@ export const state = writable<AppState>({
   libraryCount: 0,
   canUndo: false,
   canRedo: false,
+  filmStock: null,
+  missingStock: null,
 });
 
 /** Latest error surfaced to the banner (UX_SPEC §9: message + cause + next action). */
@@ -62,10 +64,21 @@ export interface FilmAdjustments {
   pre_desaturate: number;
 }
 
+export interface LensParams {
+  vignette_amount: number;
+  lens_fov_deg: number;
+  veiling_amount: number;
+  veiling_sigma_mm: number;
+  chromatic_aberration: number;
+  distortion: number;
+}
+
 export interface FilmState {
   stock: string | null;
   enabled: boolean;
   adjustments: FilmAdjustments;
+  /** M4 #23: the Lens panel surface. */
+  lens: LensParams;
 }
 
 export const stocks = writable<Stock[]>([]);
@@ -104,6 +117,10 @@ export interface SuggestionSource {
 export interface ToneState {
   params: ToneParams | null;
   source: SuggestionSource | null;
+  /** Display estimates for the Color panel (Kelvin is a UI projection
+   * of the cone gains; `color::tone` owns the round-trip tolerances). */
+  cct_estimate_k: number | null;
+  tint_estimate: number | null;
 }
 
 export interface Suggestion {
@@ -139,3 +156,48 @@ export interface ModelInfo {
 export const tone = writable<ToneState | null>(null);
 export const suggestion = writable<Suggestion | null>(null);
 export const models = writable<ModelInfo[]>([]);
+
+// ─── M4 #23: settings · recents · presets · filmstrip ──────────────────────
+
+export interface AppSettings {
+  language: string;
+  theme: string;
+  preview_max_dim: number;
+  cache_budget_mb: number;
+  gpu_enabled: boolean;
+  update_channel: string;
+  offline_mode: boolean;
+  log_level: string;
+}
+
+export interface RecentItem {
+  path: string;
+  name: string;
+  last_opened_utc: string;
+  width: number;
+  height: number;
+  has_recipe: boolean;
+  missing: boolean;
+  thumb_data_url: string | null;
+}
+
+export interface UserPreset {
+  id: string;
+  name: string;
+  created_utc: string;
+  modified_utc: string;
+  source: string;
+  summary: string;
+}
+
+export interface StockThumb {
+  stock_id: string;
+  thumb_data_url: string;
+}
+
+export const settings = writable<AppSettings | null>(null);
+export const recents = writable<RecentItem[]>([]);
+export const presets = writable<UserPreset[]>([]);
+export const stockThumbs = writable<StockThumb[]>([]);
+
+export const missingStock = writable<string | null>(null);

@@ -17,9 +17,7 @@ use melography_cli::{ApplyFormat, ApplyOptions};
 use melography_color::tone::ToneParams;
 use melography_lut::stage::LutApply;
 use melography_lut::{LutEncoding, LutRecord};
-use melography_presets::sidecar::{
-    Fingerprint, SidecarV1, SuggestionKind, SuggestionSource,
-};
+use melography_presets::sidecar::{Fingerprint, SidecarV1, SuggestionKind, SuggestionSource};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -116,13 +114,10 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
         .as_ref()
         .map(|s| (s.width, s.height))
         .unwrap_or((0, 0));
-    let thumb = st
-        .session
-        .as_ref()
-        .map(|s| {
-            let f = render::compose_original(&s.ap1, 160);
-            (f.width, f.height, f.rgba)
-        });
+    let thumb = st.session.as_ref().map(|s| {
+        let f = render::compose_original(&s.ap1, 160);
+        (f.width, f.height, f.rgba)
+    });
     let lib = st.library_root();
     let path_str = path.to_string_lossy().into_owned();
     st.recents.record_open(
@@ -685,8 +680,16 @@ fn tone_state_json(tone: &crate::state::ToneState) -> ToneStateJson {
     ToneStateJson {
         params: tone.params,
         source: tone.source.clone(),
-        cct_estimate_k: tone.params.as_ref().and_then(|p| p.wb.as_ref()).and_then(melography_color::tone::estimate_cct_k),
-        tint_estimate: tone.params.as_ref().and_then(|p| p.wb.as_ref()).and_then(melography_color::tone::estimate_tint),
+        cct_estimate_k: tone
+            .params
+            .as_ref()
+            .and_then(|p| p.wb.as_ref())
+            .and_then(melography_color::tone::estimate_cct_k),
+        tint_estimate: tone
+            .params
+            .as_ref()
+            .and_then(|p| p.wb.as_ref())
+            .and_then(melography_color::tone::estimate_tint),
     }
 }
 
@@ -1028,8 +1031,8 @@ pub fn save_preset(state: St, name: String) -> Result<PresetJson, AppError> {
         return Err(AppError::new("preset.name", "a real name is required"));
     }
     let st = state.lock().unwrap();
-    let preset =
-        crate::user_presets::UserPreset::new(&name, st.current_stages()).store_new(&presets_dir(&st));
+    let preset = crate::user_presets::UserPreset::new(&name, st.current_stages())
+        .store_new(&presets_dir(&st));
     let preset = preset.map_err(|e| AppError::new("preset.save", e.to_string()))?;
     Ok(PresetJson {
         id: preset.id,
@@ -1042,11 +1045,7 @@ pub fn save_preset(state: St, name: String) -> Result<PresetJson, AppError> {
 }
 
 #[tauri::command]
-pub fn rename_preset(
-    state: St,
-    id: String,
-    name: String,
-) -> Result<Vec<PresetJson>, AppError> {
+pub fn rename_preset(state: St, id: String, name: String) -> Result<Vec<PresetJson>, AppError> {
     let name = crate::user_presets::sanitize_name(&name);
     let st = state.lock().unwrap();
     let dir = presets_dir(&st);
@@ -1083,4 +1082,77 @@ pub fn apply_preset(state: St, id: String) -> Result<StateJson, AppError> {
     st.dirty = true;
     st.preview_cache = None;
     Ok(state_json(&st))
+}
+
+// ─── Filmstrip (M4 #23, UX_SPEC §4) ─────────────────────────────────────────
+
+/// One stock thumbnail: the CURRENT photo through THAT stock's pipeline
+/// (default adjustments), as an inline PNG data URL — the filmstrip's
+/// "live stock thumbnails" contract. Small enough (≤ ~160 px) that base64
+/// in one JSON payload beats N binary round-trips.
+#[derive(Serialize)]
+pub struct StockThumbJson {
+    pub stock_id: String,
+    pub thumb_data_url: String,
+}
+
+#[tauri::command]
+pub fn stock_thumbs(state: St, max_dim: u32) -> Result<Vec<StockThumbJson>, AppError> {
+    let st = state.lock().unwrap();
+    let Some(session) = st.session.as_ref() else {
+        return Ok(Vec::new()); // no session = empty filmstrip, not an error
+    };
+    let max_dim = max_dim.clamp(48, 256);
+    let mut out = Vec::with_capacity(st.stocks.len());
+    for stock in &st.stocks {
+        // Default-adjustments film leg for this stock (the same resolve
+        // path the preview uses, with factory knobs).
+        let defaults = melography_film::Adjustments::default();
+        let leg = melography_film::chain::FilmChainParams::new(stock.clone())
+            .ok()
+            .and_then(|c| {
+                c.with_adjustments(defaults.clone(), melography_film::LensParams::default())
+                    .ok()
+            })
+            .map(|params| render::FilmLeg {
+                params,
+                key: render::film_leg_key(&stock.id, &defaults),
+            });
+        let Some(leg) = leg else {
+            continue; // honest skip: a stock that cannot resolve has no thumb
+        };
+        let frame = render::compose_preview(
+            &session.ap1,
+            &mut None, // never touch the live preview cache
+            &[],
+            Some(&leg),
+            st.tone.params.as_ref(),
+            max_dim,
+        )
+        .map_err(AppError::from)?;
+        let mut url = String::with_capacity(frame.rgba.len() * 4 / 3 + 32);
+        url.push_str("data:image/png;base64,");
+        // RGBA → RGB over the chrome dark (same composite as recents).
+        let mut rgb = Vec::with_capacity(frame.rgba.len() / 4 * 3);
+        for px in frame.rgba.as_chunks::<4>().0 {
+            let a = f32::from(px[3]) / 255.0;
+            for v in &px[..3] {
+                let v = f32::from(*v) * a + 14.0 * (1.0 - a);
+                rgb.push(v.round().clamp(0.0, 255.0) as u8);
+            }
+        }
+        // Encode via a temp file (the one encoder code path), then read back.
+        let tmp = std::env::temp_dir().join(format!("melography-thumb-{}.png", std::process::id()));
+        if melography_io::encode::encode_png8(&tmp, frame.width, frame.height, &rgb, None).is_ok() {
+            if let Ok(bytes) = std::fs::read(&tmp) {
+                base64_encode(&bytes, &mut url);
+                out.push(StockThumbJson {
+                    stock_id: stock.id.clone(),
+                    thumb_data_url: url,
+                });
+            }
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+    Ok(out)
 }

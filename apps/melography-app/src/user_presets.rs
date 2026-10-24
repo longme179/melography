@@ -67,7 +67,10 @@ pub fn sanitize_name(name: &str) -> String {
     let cleaned: String = trimmed
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || " ._-()[]'\"àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ".contains(c) {
+            if c.is_alphanumeric()
+                || " ._-()[]'\"àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
+                    .contains(c)
+            {
                 c
             } else {
                 '-'

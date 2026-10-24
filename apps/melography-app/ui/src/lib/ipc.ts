@@ -65,6 +65,10 @@ export interface AppState {
   /** Undo availability (M4 #24 — drives toolbar + keyboard). */
   canUndo: boolean;
   canRedo: boolean;
+  /** Current film stock id (null = film off) — panel refresh (M4 #23). */
+  filmStock: string | null;
+  /** Recipe referenced a stock missing from the registry (amber badge). */
+  missingStock: string | null;
 }
 
 export interface AppErrorPayload {
@@ -261,4 +265,60 @@ export async function weightsFileDialog(): Promise<string | null> {
     filters: [{ name: "ONNX weights", extensions: ["onnx"] }],
   });
   return typeof picked === "string" ? picked : null;
+}
+
+// ── M4 #23: settings · recents (S1) · presets (S5) · color panel ───────────
+
+import type { AppSettings, RecentItem, UserPreset, StockThumb, WbGains } from "./stores";
+
+export async function getSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>("get_settings");
+}
+
+export async function setSettings(settings: AppSettings): Promise<AppSettings> {
+  return invoke<AppSettings>("set_settings", { settings });
+}
+
+export async function listRecents(): Promise<RecentItem[]> {
+  return invoke<RecentItem[]>("list_recents");
+}
+
+export async function purgeRecents(): Promise<number> {
+  return invoke<number>("purge_recents");
+}
+
+export async function listPresets(): Promise<UserPreset[]> {
+  return invoke<UserPreset[]>("list_presets");
+}
+
+export async function savePreset(name: string): Promise<UserPreset> {
+  return invoke<UserPreset>("save_preset", { name });
+}
+
+export async function renamePreset(id: string, name: string): Promise<UserPreset[]> {
+  return invoke<UserPreset[]>("rename_preset", { id, name });
+}
+
+export async function deletePreset(id: string): Promise<UserPreset[]> {
+  return invoke<UserPreset[]>("delete_preset", { id });
+}
+
+export async function applyPreset(id: string): Promise<AppState> {
+  return invoke<AppState>("apply_preset", { id });
+}
+
+export async function stockThumbsCmd(maxDim: number): Promise<StockThumb[]> {
+  return invoke<StockThumb[]>("stock_thumbs", { maxDim });
+}
+
+/** Color panel: (Temperature K, Tint −100..100) → WB cone gains (Rust-side
+ * color math — the webview never computes color, ADR-0001). */
+export async function wbFromCctTint(cctK: number, tint: number): Promise<WbGains> {
+  return invoke<WbGains>("wb_from_cct_tint", { cctK, tint });
+}
+
+/** Close the current session (S1 ⇆ S2 navigation) — the original is
+ * never touched; the sidecar stays next to it. */
+export async function closeImage(): Promise<void> {
+  return invoke("close_image");
 }

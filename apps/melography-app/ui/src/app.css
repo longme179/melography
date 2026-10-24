@@ -74,3 +74,134 @@ input[type="range"] { accent-color: var(--accent-400); }
   font-size: 0.72rem;
   padding: 0;
 }
+
+/* ─── Themes (M4 #23, UX_SPEC §10): token swaps only ────────────────────── */
+
+/* Light — paper-white chrome for bright rooms; the viewport stays neutral
+   dark (judging photographs needs a dark surround — UX_DESIGN_TOKENS). */
+:root[data-theme="light"] {
+  --bg-app: #f4f4f5;
+  --bg-viewport: #1c1d1f; /* deliberately stays dark (tokens rationale) */
+  --bg-panel: #ffffff;
+  --bg-elevated: #ececee;
+  --bg-hover: #e2e2e5;
+  --bg-active: #d8d8dc;
+  --fg-primary: #1b1c1e;
+  --fg-secondary: #4a4d52;
+  --fg-tertiary: #6b6f76;
+  --fg-disabled: #a2a6ac;
+  --stroke-subtle: #dcdce0;
+  --stroke-strong: #c2c3c9;
+  --accent-400: #b07414;
+  --accent-500: #96650e;
+  --accent-emph: #7a4f06;
+  --ok: #1e7d4f;
+  --info: #1f6c86;
+  --warn: #8a6414;
+  --danger: #b23c2a;
+}
+
+/* High contrast — WCAG AAA-aiming text on near-black, stronger strokes. */
+:root[data-theme="contrast"] {
+  --bg-app: #000000;
+  --bg-viewport: #000000;
+  --bg-panel: #0a0a0a;
+  --bg-elevated: #141414;
+  --bg-hover: #1f1f1f;
+  --bg-active: #2a2a2a;
+  --fg-primary: #ffffff;
+  --fg-secondary: #e6e6e6;
+  --fg-tertiary: #c8c8c8;
+  --fg-disabled: #9a9a9a;
+  --stroke-subtle: #4a4a4a;
+  --stroke-strong: #767676;
+  --accent-400: #ffc14d;
+  --accent-500: #f0a72e;
+  --accent-emph: #ffd47f;
+  --ok: #5cd39a;
+  --info: #6fc3e0;
+  --warn: #ffd166;
+  --danger: #ff7a63;
+}
+
+/* Tab focus ring is ALWAYS visible in every theme (UX_SPEC §8). */
+:focus-visible {
+  outline: 2px solid var(--accent-400);
+  outline-offset: 1px;
+}
+
+/* ─── Panel rail tabs (M4 #23, UX_SPEC §4) ──────────────────────────────── */
+.rail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--stroke-subtle);
+}
+.rail-tabs button {
+  font-size: 11px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-secondary);
+}
+.rail-tabs button[aria-selected="true"] {
+  background: var(--bg-active);
+  color: var(--fg-primary);
+  font-weight: 600;
+}
+.rail-tabs button:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+
+/* ─── Filmstrip (UX_SPEC §4) ────────────────────────────────────────────── */
+.filmstrip {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--stroke-subtle);
+  min-height: 68px;
+}
+.filmstrip .frame {
+  flex-shrink: 0;
+  border: 1px solid var(--stroke-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  height: 52px;
+  aspect-ratio: auto;
+}
+.filmstrip .frame img {
+  display: block;
+  height: 100%;
+  width: auto;
+}
+.filmstrip .frame.active {
+  border-color: var(--accent-400);
+  box-shadow: 0 0 0 1px var(--accent-400);
+}
+.filmstrip .frame .tag {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  font-size: 9px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  padding: 1px 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filmstrip .hint {
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  white-space: nowrap;
+}
