@@ -25,6 +25,11 @@ fn battery() -> Vec<f32> {
 }
 
 /// f32 simulation of the WGSL kernel (same formulas/order).
+///
+/// Index-based loops mirror the WGSL indexing deliberately (fidelity to
+/// the shader over iterator idioms); `LOG10_2` replaces the literal the
+/// shader carries as a decimal constant.
+#[allow(clippy::needless_range_loop)]
 fn wgsl_sim(p: &melography_gpu::film_pixel_types::FilmPixelGpuParams, e: &[f32; 3]) -> [f32; 3] {
     use melography_gpu::film_pixel_types::CurveGpu;
     fn spline_eval(c: &CurveGpu, x: f32) -> f32 {
@@ -56,7 +61,7 @@ fn wgsl_sim(p: &melography_gpu::film_pixel_types::FilmPixelGpuParams, e: &[f32; 
             + (t3 - t2) * h * mb
     }
     fn log10f(x: f32) -> f32 {
-        x.log2() * 0.301_030_f32
+        x.log2() * std::f32::consts::LOG10_2
     }
     fn mat3(m: &[f32; 9], v: [f32; 3]) -> [f32; 3] {
         [
