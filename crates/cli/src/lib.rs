@@ -573,6 +573,8 @@ pub fn cmd_sidecar(path: &Path) -> serde_json::Value {
             "stages": sc.pipeline.stages.iter().map(|s| match s {
                 StageEntry::FilmIdentity { enabled, .. } =>
                     serde_json::json!({"stage": "film_identity", "enabled": enabled}),
+                StageEntry::FilmStock { stock, stock_version, enabled, .. } =>
+                    serde_json::json!({"stage": "film_stock", "stock": stock, "stock_version": stock_version, "enabled": enabled}),
                 StageEntry::Lut { instance, insertion, intensity, declared_input, declared_output, enabled, .. } =>
                     serde_json::json!({
                         "stage": "lut", "instance": instance,
@@ -597,4 +599,238 @@ pub fn cmd_sidecar(path: &Path) -> serde_json::Value {
 #[allow(dead_code)]
 fn _ch(c: Channels) -> usize {
     c.count()
+}
+
+// ─── film (M2, issues #10/#11) ─────────────────────────────────────────────
+
+/// Options for `film apply` (M2): decode → AP1 → full film chain → S5
+/// export, with the recipe recorded in a sidecar v1 `film_stock` stage.
+pub struct FilmApplyOptions {
+    pub input: PathBuf,
+    pub output: PathBuf,
+    /// Stock profile id (registry lookup) or path to a profile JSON.
+    pub stock: String,
+    /// Registry directory; required for id lookups.
+    pub profiles_dir: Option<PathBuf>,
+    pub adjustments: melography_film::Adjustments,
+    pub lens: melography_film::LensParams,
+    pub format: ApplyFormat,
+    pub depth: u32,
+    pub quality: u8,
+    /// Strip height for the tiled executor (0 = monolithic).
+    pub strip_h: u32,
+    pub write_sidecar: bool,
+}
+
+/// Resolve a stock reference (id or file path) to a validated profile.
+fn resolve_stock(
+    stock: &str,
+    profiles_dir: Option<&Path>,
+) -> Result<(melography_film::StockProfile, String), String> {
+    let as_path = Path::new(stock);
+    if as_path.extension().map(|e| e == "json").unwrap_or(false) && as_path.is_file() {
+        let p = mpresets::load_stock_profile(as_path).map_err(|e| e.to_string())?;
+        let origin = as_path.display().to_string();
+        return Ok((p, origin));
+    }
+    let dir = profiles_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("profiles"));
+    let reg =
+        mpresets::StockRegistry::open(&dir).map_err(|e| format!("{e} (dir: {})", dir.display()))?;
+    let p = reg
+        .by_id(stock)
+        .ok_or_else(|| {
+            let known: Vec<String> = reg.profiles.iter().map(|p| p.id.clone()).collect();
+            format!("unknown stock id {stock:?} (known: {})", known.join(", "))
+        })?
+        .clone();
+    Ok((p, format!("{}/{}", dir.display(), stock)))
+}
+
+/// `film list` — registry summaries (stock browser data source).
+pub fn cmd_film_list(profiles_dir: Option<&Path>) -> serde_json::Value {
+    let dir = profiles_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("profiles"));
+    match mpresets::StockRegistry::open(&dir) {
+        Ok(reg) => serde_json::json!({
+            "command": "film list",
+            "profiles_dir": dir.display().to_string(),
+            "stocks": reg.summaries(),
+        }),
+        Err(e) => serde_json::json!({
+            "command": "film list",
+            "error": format!("{e} (dir: {})", dir.display()),
+        }),
+    }
+}
+
+/// `film apply` — the full M2 slice.
+pub fn cmd_film_apply(opts: &FilmApplyOptions) -> serde_json::Value {
+    let t_total = Instant::now();
+    let (profile, origin) = match resolve_stock(&opts.stock, opts.profiles_dir.as_deref()) {
+        Ok(v) => v,
+        Err(e) => {
+            return serde_json::json!({"command": "film apply", "error": e});
+        }
+    };
+
+    let (decoded, ap1, use_lcms, decode_ms, s1_ms) = match decode_to_ap1(&opts.input, false) {
+        Ok(v) => v,
+        Err(e) => {
+            return serde_json::json!({"command": "film apply", "error": e});
+        }
+    };
+
+    let params = match melography_film::chain::FilmChainParams::new(profile.clone())
+        .and_then(|p| p.with_adjustments(opts.adjustments.clone(), opts.lens))
+    {
+        Ok(p) => p,
+        Err(e) => {
+            return serde_json::json!({"command": "film apply", "error": e.to_string()});
+        }
+    };
+    let t = Instant::now();
+    let film_out = if opts.strip_h > 0 {
+        melography_film::chain::render_tiled(&ap1, &params, opts.strip_h)
+    } else {
+        melography_film::chain::render(&ap1, &params)
+    };
+    let film_out = match film_out {
+        Ok(o) => o,
+        Err(e) => {
+            return serde_json::json!({"command": "film apply", "error": e.to_string()});
+        }
+    };
+    let film_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+    // S5 + encode (same per-format factual capabilities as `apply`).
+    let t = Instant::now();
+    let encode_result: Result<(), String> = match (opts.format, opts.depth) {
+        (ApplyFormat::Png, 8) => {
+            let u8px = luma_to_u8(&film_out);
+            mio::encode::encode_png8(
+                &opts.output,
+                film_out.width(),
+                film_out.height(),
+                &u8px,
+                Some(&srgb_icc_bytes()),
+            )
+            .map_err(|e| format!("png8: {e}"))
+        }
+        (ApplyFormat::Png, 16) => {
+            let u16px = if use_lcms {
+                match mcolor::ap1_to_srgb_lcms(&film_out) {
+                    Ok(back) => back
+                        .data()
+                        .iter()
+                        .map(|&c| (c.clamp(0.0, 1.0) * 65_535.0).round() as u16)
+                        .collect(),
+                    Err(e) => {
+                        return serde_json::json!({"command": "film apply", "error": format!("lcms S5: {e}")})
+                    }
+                }
+            } else {
+                mcolor::ap1_to_srgb_u16_fast(&film_out)
+            };
+            mio::encode::encode_png16(
+                &opts.output,
+                film_out.width(),
+                film_out.height(),
+                &u16px,
+                Some(&srgb_icc_bytes()),
+            )
+            .map_err(|e| format!("png16: {e}"))
+        }
+        (ApplyFormat::Jpeg, depth) => {
+            if depth != 8 {
+                Err("JPEG export is 8-bit only (use PNG/TIFF for 16-bit)".to_string())
+            } else {
+                let u8px = luma_to_u8(&film_out);
+                mio::encode::encode_jpeg_u8_with_icc(
+                    &opts.output,
+                    film_out.width(),
+                    film_out.height(),
+                    &u8px,
+                    opts.quality,
+                    &srgb_icc_bytes(),
+                )
+                .map_err(|e| format!("jpeg: {e}"))
+            }
+        }
+        (ApplyFormat::Tiff, depth) => {
+            if depth != 16 {
+                Err("TIFF export is 16-bit only in v1".to_string())
+            } else {
+                let u16px = mcolor::ap1_to_srgb_u16_fast(&film_out);
+                mio::encode::encode_tiff_u16(
+                    &opts.output,
+                    film_out.width(),
+                    film_out.height(),
+                    &u16px,
+                )
+                .map_err(|e| format!("tiff: {e}"))
+            }
+        }
+        (ApplyFormat::Png, _) => Err("PNG depth must be 8 or 16".to_string()),
+    };
+    if let Err(e) = encode_result {
+        return serde_json::json!({"command": "film apply", "error": e});
+    }
+    let encode_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+    // Sidecar v1 with the film_stock stage (data reference, not a copy).
+    let mut sidecar_sha = serde_json::json!(null);
+    if opts.write_sidecar {
+        let file_bytes = std::fs::read(&opts.input).unwrap_or_default();
+        let fingerprint = Fingerprint::compute(&file_bytes, &decoded.pixels);
+        let mut sc = SidecarV1::new(
+            opts.input
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            Some(fingerprint),
+        );
+        sc.image.input_encoding = match &decoded.encoding {
+            melography_core::ColorEncoding::Icc { profile } => mpresets::InputEncodingRecord::Icc {
+                sha256: sha256_hex(profile),
+            },
+            _ => mpresets::InputEncodingRecord::UntaggedSrgb,
+        };
+        sc.pipeline.stages.push(StageEntry::FilmStock {
+            stock: profile.id.clone(),
+            stock_version: profile.profile_version,
+            adjustments: opts.adjustments.clone(),
+            lens: opts.lens,
+            enabled: opts.adjustments.enabled,
+            extra: Default::default(),
+        });
+        let spath = opts.output.with_extension("melography.json");
+        sc.save(&spath).expect("sidecar write");
+        sidecar_sha = serde_json::json!(sha256_hex(sc.to_json().expect("sidecar json").as_bytes()));
+    }
+
+    serde_json::json!({
+        "command": "film apply",
+        "input": opts.input.display().to_string(),
+        "output": opts.output.display().to_string(),
+        "stock": {
+            "id": profile.id,
+            "display_name": profile.display_name,
+            "provenance": format!("{:?}", profile.provenance),
+            "confidence": format!("{:?}", profile.confidence),
+            "origin": origin,
+        },
+        "timings_ms": {
+            "decode": decode_ms,
+            "s1_ap1": s1_ms,
+            "film_chain": film_ms,
+            "encode": encode_ms,
+            "total": t_total.elapsed().as_secs_f64() * 1000.0,
+        },
+        "strip_h": opts.strip_h,
+        "format": format!("{:?}", opts.format),
+        "sidecar_sha256": sidecar_sha,
+    })
 }

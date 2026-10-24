@@ -17,8 +17,8 @@
 
 use clap::{Parser, Subcommand};
 use melography_cli::{
-    cmd_apply, cmd_bench, cmd_chart, cmd_golden, cmd_lut_parse, cmd_roundtrip, cmd_sidecar,
-    ApplyFormat, ApplyOptions,
+    cmd_apply, cmd_bench, cmd_chart, cmd_film_apply, cmd_film_list, cmd_golden, cmd_lut_parse,
+    cmd_roundtrip, cmd_sidecar, ApplyFormat, ApplyOptions, FilmApplyOptions,
 };
 use melography_lut::stage::InsertionPoint;
 use melography_lut::LutEncoding;
@@ -111,6 +111,88 @@ enum Cmd {
         #[arg(long)]
         file: PathBuf,
     },
+    /// Film chain (M2): list stocks / apply a stock profile end-to-end.
+    Film {
+        #[command(subcommand)]
+        cmd: FilmCmd,
+    },
+}
+
+// The `Apply` variant is field-heavy by design (every user knob is
+// explicit — mirrors ApplyOptions); boxing would obscure the CLI schema.
+#[allow(clippy::large_enum_variant)]
+#[derive(Subcommand)]
+enum FilmCmd {
+    /// List the stock registry (summaries for the browser UI).
+    List {
+        /// Registry directory (default: ./profiles).
+        #[arg(long)]
+        profiles_dir: Option<PathBuf>,
+    },
+    /// decode → AP1 → full film chain (stock + adjustments) → export.
+    Apply {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        /// Stock profile id or path to a profile JSON.
+        #[arg(long)]
+        stock: String,
+        /// Registry directory for id lookups (default: ./profiles).
+        #[arg(long)]
+        profiles_dir: Option<PathBuf>,
+        /// Exposure compensation in stops (§A).
+        #[arg(long, default_value_t = 0.0)]
+        ev: f64,
+        /// Push/pull processing in stops, −3..3 (§E).
+        #[arg(long, default_value_t = 0.0)]
+        push_pull: f64,
+        /// Development contrast, 0.6..1.6 (§E).
+        #[arg(long, default_value_t = 1.0)]
+        dev_contrast: f64,
+        /// Print/scan exposure in stops (§F).
+        #[arg(long, default_value_t = 0.0)]
+        print_exposure: f64,
+        /// Grain intensity, 0..2 (§G).
+        #[arg(long, default_value_t = 1.0)]
+        grain_intensity: f64,
+        /// Grain seed override (determinism knob).
+        #[arg(long)]
+        grain_seed: Option<u32>,
+        /// Halation intensity, 0..1 (§C; energy guard still enforced).
+        #[arg(long, default_value_t = 1.0)]
+        halation_intensity: f64,
+        /// Inversion path override: paper | scanner | direct-scan.
+        #[arg(long)]
+        inversion: Option<String>,
+        /// Cross-process [ART]: none | e6-in-c41 | c41-in-e6.
+        #[arg(long, default_value = "none")]
+        cross_process: String,
+        /// Bleach bypass weight, 0..1 [ART].
+        #[arg(long, default_value_t = 0.0)]
+        bleach_bypass: f64,
+        /// Vignette amount, 0..1 (§B).
+        #[arg(long, default_value_t = 0.0)]
+        vignette: f64,
+        /// Veiling glare amount, 0..1 (§B).
+        #[arg(long, default_value_t = 0.0)]
+        veiling: f64,
+        /// Output format: png | jpeg | tiff.
+        #[arg(long, default_value = "png")]
+        format: String,
+        /// Bit depth: 8 or 16.
+        #[arg(long, default_value_t = 16)]
+        depth: u32,
+        /// JPEG quality 1–100.
+        #[arg(long, default_value_t = 92)]
+        quality: u8,
+        /// Strip height for the tiled executor (0 = monolithic).
+        #[arg(long, default_value_t = 0)]
+        strip_h: u32,
+        /// Skip sidecar writing.
+        #[arg(long, default_value_t = false)]
+        no_sidecar: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -202,6 +284,101 @@ fn main() {
             })
         }
         Cmd::Sidecar { file } => cmd_sidecar(&file),
+        Cmd::Film { cmd } => match cmd {
+            FilmCmd::List { profiles_dir } => cmd_film_list(profiles_dir.as_deref()),
+            FilmCmd::Apply {
+                input,
+                output,
+                stock,
+                profiles_dir,
+                ev,
+                push_pull,
+                dev_contrast,
+                print_exposure,
+                grain_intensity,
+                grain_seed,
+                halation_intensity,
+                inversion,
+                cross_process,
+                bleach_bypass,
+                vignette,
+                veiling,
+                format,
+                depth,
+                quality,
+                strip_h,
+                no_sidecar,
+            } => {
+                use melography_film::profile::InversionPath;
+                let inversion = match inversion.as_deref() {
+                    None => None,
+                    Some("paper") => Some(InversionPath::Paper),
+                    Some("scanner") => Some(InversionPath::Scanner),
+                    Some("direct-scan") => Some(InversionPath::DirectScan),
+                    Some(other) => {
+                        eprintln!(
+                            "error: unknown inversion path {other:?} (fixed list: paper, scanner, direct-scan)"
+                        );
+                        std::process::exit(2);
+                    }
+                };
+                use melography_film::emulsion::CrossProcessMode;
+                let cross_process = match cross_process.as_str() {
+                    "none" => CrossProcessMode::None,
+                    "e6-in-c41" => CrossProcessMode::E6InC41,
+                    "c41-in-e6" => CrossProcessMode::C41InE6,
+                    other => {
+                        eprintln!(
+                            "error: unknown cross-process mode {other:?} (fixed list: none, e6-in-c41, c41-in-e6)"
+                        );
+                        std::process::exit(2);
+                    }
+                };
+                let format = match ApplyFormat::parse(&format) {
+                    Ok(f) => f,
+                    Err(msg) => {
+                        eprintln!("error: {msg}");
+                        std::process::exit(2);
+                    }
+                };
+                let adjustments = melography_film::Adjustments {
+                    enabled: true,
+                    ev,
+                    push_pull_stops: push_pull,
+                    dev_contrast,
+                    print_exposure_stops: print_exposure,
+                    inversion_path: inversion,
+                    grain_intensity,
+                    halation_intensity,
+                    grain_seed,
+                    cross_process,
+                    bleach_bypass,
+                    pre_desaturate: 0.0,
+                };
+                let lens = melography_film::LensParams {
+                    vignette_amount: vignette,
+                    veiling_amount: veiling,
+                    ..Default::default()
+                };
+                if let Err(msg) = adjustments.validate() {
+                    eprintln!("error: {msg}");
+                    std::process::exit(2);
+                }
+                cmd_film_apply(&FilmApplyOptions {
+                    input,
+                    output,
+                    stock,
+                    profiles_dir,
+                    adjustments,
+                    lens,
+                    format,
+                    depth,
+                    quality,
+                    strip_h,
+                    write_sidecar: !no_sidecar,
+                })
+            }
+        },
     };
     println!(
         "{}",

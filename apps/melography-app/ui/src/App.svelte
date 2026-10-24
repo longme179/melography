@@ -8,12 +8,16 @@
     openImage,
     getState,
     saveRecipe,
+    listStocks,
+    getFilm,
   } from "./lib/ipc";
   import { t, setLang, type Lang } from "./lib/i18n";
-  import { state, lastError, toast, compareOn } from "./lib/stores";
+  import { state, lastError, toast, compareOn, stocks, film } from "./lib/stores";
   import Toolbar from "./components/Toolbar.svelte";
   import Viewport from "./components/Viewport.svelte";
   import LutPanel from "./components/LutPanel.svelte";
+  import FilmLab from "./components/FilmLab.svelte";
+  import StockBrowser from "./components/StockBrowser.svelte";
   import ExportDialog from "./components/ExportDialog.svelte";
   import ImportLutDialog from "./components/ImportLutDialog.svelte";
   import ErrorBanner from "./components/ErrorBanner.svelte";
@@ -22,6 +26,7 @@
   let importOpen = false;
   let viewport: Viewport;
   let lutPanel: LutPanel;
+  let stockBrowserOpen = false;
   let lang: Lang = "en";
 
   async function refreshState() {
@@ -76,6 +81,9 @@
 
   onMount(() => {
     refreshState();
+    // Film Lab (M2): registry + current film state.
+    listStocks().then((s) => stocks.set(s)).catch(console.error);
+    getFilm().then((f) => film.set(f)).catch(console.error);
     const h = window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
@@ -110,6 +118,14 @@
           {t("panel.lut.import")}
         </button>
       </div>
+      <div class="rail-head film-head">
+        <h2>Film Lab</h2>
+        <button class="link" on:click={() => (stockBrowserOpen = true)}>
+          Browse stocks…
+        </button>
+      </div>
+      <FilmLab />
+      <StockBrowser bind:open={stockBrowserOpen} />
     </aside>
   </main>
   <footer class="statusbar mono">

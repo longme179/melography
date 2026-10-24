@@ -27,11 +27,32 @@ pub fn run() {
         melography_cli::default_library_root()
     }
 
+    /// Shipped stock registry: `$MELOGRAPHY_PROFILES`, else the repo's
+    /// `profiles/` directory when running from a checkout (dev), else
+    /// `<library_root>/profiles` (installed layout, M5 packaging owns it).
+    fn stocks_root() -> PathBuf {
+        if let Ok(p) = std::env::var("MELOGRAPHY_PROFILES") {
+            return PathBuf::from(p);
+        }
+        for cand in ["profiles", "../profiles", "../../profiles"] {
+            let c = PathBuf::from(cand);
+            if c.join("warm-400-negative.json").is_file() {
+                return c;
+            }
+        }
+        library_root().join("profiles")
+    }
+
     let builder = tauri::Builder::default();
     #[cfg(feature = "gui")]
     let builder = builder.plugin(tauri_plugin_dialog::init());
+    let mut state = state::EditorState::new(library_root());
+    state.stocks_dir = stocks_root();
+    state.stocks = melography_presets::StockRegistry::open(&state.stocks_dir)
+        .map(|r| r.profiles)
+        .unwrap_or_default(); // browser shows the empty state honestly
     builder
-        .manage(Mutex::new(state::EditorState::new(library_root())))
+        .manage(Mutex::new(state))
         .invoke_handler(tauri::generate_handler![
             commands::open_image,
             commands::close_image,
@@ -41,6 +62,9 @@ pub fn run() {
             commands::list_luts,
             commands::remove_lut,
             commands::set_lut_stack,
+            commands::get_film,
+            commands::set_film,
+            commands::list_stocks,
             commands::get_state,
             commands::save_recipe,
             commands::export_image,

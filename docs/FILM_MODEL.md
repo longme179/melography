@@ -3,7 +3,9 @@
 **Version:** Phase-0 spec · **Date:** 2026-10-24
 **Scope:** implementable math, not slider poetry. Physical/sensitometric approximation is explicitly separated from artistic additions (`[ART]` tags); users are told which parameters lack measured calibration.
 
-**Position statement:** we target *convincing negative, reversal, print and scan behavior* for generic film classes. We do **not** claim exact recreation of branded stocks without calibration data; profiles carry provenance labels (`measured` / `reference-fitted` / `artist-authored` / `experimental`) that the UI surfaces (UX_SPEC §5).
+**Position statement:** we target *convincing negative, reversal, print and scan behavior* for generic film classes.
+
+**Implementation status (M2, 2026-10-24):** stages A–I are implemented with the §L gates green (`crates/film`, evidence in `docs/quality/M2_FILM_QUALITY_REPORT.md`); stock profiles + schema ship (`schemas/`, `profiles/`); the §K fitting harness is live (`tools/fit_*.py`). Documented v1 deviations: CA/distortion declared-but-rejected (§B [ART]); grain λ modulation is presence-constant with all density dependence in σ(D) (§G); σ_curve is the 48 µm-aperture RMS anchored at D=1.0; the preview grain fast path (§G) is planned per the quality report §5. We do **not** claim exact recreation of branded stocks without calibration data; profiles carry provenance labels (`measured` / `reference-fitted` / `artist-authored` / `experimental`) that the UI surfaces (UX_SPEC §5).
 
 ## 0. Signal domains (defined once, used everywhere)
 

@@ -10,8 +10,11 @@ authors.workspace = true
 
 [dependencies]
 melography-core = { workspace = true }
+melography-gpu = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+melography-presets = { workspace = true }

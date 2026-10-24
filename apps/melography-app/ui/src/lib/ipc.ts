@@ -2,6 +2,7 @@
 // in, preview frames out; the webview never computes pixels).
 
 import { invoke } from "@tauri-apps/api/core";
+import type { FilmState, Stock } from "./stores";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
 /** Preview wire format (render.rs): LE header + RGBA8.
@@ -167,4 +168,12 @@ export async function lutFileDialog(): Promise<string | null> {
     filters: [{ name: "Cube LUT", extensions: ["cube"] }],
   });
   return typeof picked === "string" ? picked : null;
+}
+
+export async function listStocks(): Promise<Stock[]> {
+  return invoke<Stock[]>("list_stocks");
+}
+
+export async function getFilm(): Promise<FilmState> {
+  return invoke<FilmState>("get_film");
 }

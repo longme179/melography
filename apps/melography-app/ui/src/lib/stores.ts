@@ -31,3 +31,43 @@ export const clippingActive = derived(
   state,
   ($s) => $s.lastClampedPixels > 0,
 );
+
+// ─── Film Lab (M2) ─────────────────────────────────────────────────────────
+
+export interface Stock {
+  id: string;
+  display_name: string;
+  provenance: string;
+  confidence: string;
+  polarity: string;
+  layers: string;
+  default_path: string;
+  provenance_text: string;
+}
+
+export interface FilmAdjustments {
+  enabled: boolean;
+  ev: number;
+  push_pull_stops: number;
+  dev_contrast: number;
+  print_exposure_stops: number;
+  inversion_path: string | null;
+  grain_intensity: number;
+  halation_intensity: number;
+  grain_seed: number | null;
+  cross_process: string;
+  bleach_bypass: number;
+  pre_desaturate: number;
+}
+
+export interface FilmState {
+  stock: string | null;
+  enabled: boolean;
+  adjustments: FilmAdjustments;
+}
+
+export const stocks = writable<Stock[]>([]);
+
+export const film = writable<FilmState | null>(null);
+
+export const filmActive = derived(film, ($f) => !!$f?.stock && $f?.enabled);

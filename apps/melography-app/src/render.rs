@@ -16,11 +16,35 @@
 
 use melography_color as mcolor;
 use melography_core::{Channels, ImageF32};
+use melography_film::chain::{self as film_chain, FilmChainParams};
+use melography_film::Adjustments;
 use melography_lut::stage::{InsertionPoint, LutApply};
 use melography_lut::{CubeLut, LutError};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+
+/// Film leg input for preview composition: the resolved stock + knobs
+/// (`None` = identity). The preview applies the film chain **at preview
+/// scale after the linear downscale** — resolution-independent by
+/// construction (film-plane coordinates; grain.md §3), so preview pixels
+/// carry the physically-correct statistics and the export (full-res) is
+/// the same field sampled natively. The zoom-consistency §L gate pins
+/// this equivalence.
+pub struct FilmLeg {
+    pub params: FilmChainParams,
+    /// Cheap cache key component (stock id + serialized knobs).
+    pub key: u64,
+}
+
+pub fn film_leg_key(stock_id: &str, adjustments: &Adjustments) -> u64 {
+    let mut h = DefaultHasher::new();
+    stock_id.hash(&mut h);
+    serde_json::to_string(adjustments)
+        .unwrap_or_default()
+        .hash(&mut h);
+    h.finish()
+}
 
 /// Display-convention RGBA8 frame + render telemetry (S1-leg data).
 #[derive(Debug, Clone)]
@@ -178,14 +202,19 @@ pub fn compose_preview(
     base: &ImageF32,
     cache: &mut Option<RenderCache>,
     stack: &[ResolvedLut],
+    film: Option<&FilmLeg>,
     max_dim: u32,
 ) -> Result<PreviewFrame, LutError> {
     let start = std::time::Instant::now();
-    let key = stack_key(base, stack);
+    // Key covers the LUT stack AND the film leg.
+    let mut key = stack_key(base, stack);
+    if let Some(f) = film {
+        key ^= f.key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
     let (full, clamped) = match cache {
         Some(c) if c.key == key => (c.image.clone(), c.clamped_pixels),
         _ => {
-            let (img, clamped) = render_full(base, stack)?;
+            let (img, clamped) = render_pipeline(base, stack, film, max_dim)?;
             *cache = Some(RenderCache {
                 key,
                 image: img.clone(),
@@ -194,7 +223,13 @@ pub fn compose_preview(
             (img, clamped)
         }
     };
-    let small = downscale_ap1(&full, max_dim);
+    let small = if film.is_some() {
+        // The film leg already rendered at preview scale; the LUT leg ran
+        // on that same image — no second downscale.
+        full
+    } else {
+        downscale_ap1(&full, max_dim)
+    };
     let rgba = ap1_to_rgba8_display(&small);
     Ok(PreviewFrame {
         width: small.width(),
@@ -203,6 +238,35 @@ pub fn compose_preview(
         render_ms: start.elapsed().as_secs_f64() * 1000.0,
         clamped_pixels: clamped,
     })
+}
+
+/// Preview-scale pipeline: linear downscale → film chain (scale-free
+/// physics) → LUT stack (finishing semantics) — the cached image is the
+/// final preview-resolution result.
+fn render_pipeline(
+    base: &ImageF32,
+    stack: &[ResolvedLut],
+    film: Option<&FilmLeg>,
+    max_dim: u32,
+) -> Result<(ImageF32, u64), LutError> {
+    let mut img = if film.is_some() {
+        downscale_ap1(base, max_dim)
+    } else {
+        base.clone()
+    };
+    if let Some(f) = film {
+        img = film_chain::render(&img, &f.params).map_err(|e| LutError::Malformed {
+            detail: format!("film chain: {e}"),
+        })?;
+    }
+    // LUT stack (full-res path unchanged when no film leg is active).
+    if film.is_some() {
+        let small = img;
+        let (out, clamped) = render_full(&small, stack)?;
+        Ok((out, clamped))
+    } else {
+        render_full(&img, stack)
+    }
 }
 
 /// The compare "original": base downscale + display transform (no LUT).
@@ -324,8 +388,8 @@ mod tests {
         }];
 
         let mut cache = None;
-        let f1 = compose_preview(&base, &mut cache, &stack, 16).unwrap();
-        let f2 = compose_preview(&base, &mut cache, &stack, 16).unwrap();
+        let f1 = compose_preview(&base, &mut cache, &stack, None, 16).unwrap();
+        let f2 = compose_preview(&base, &mut cache, &stack, None, 16).unwrap();
         assert_eq!(f1.rgba, f2.rgba, "cached path returns identical pixels");
         assert!(cache.as_ref().unwrap().key == stack_key(&base, &stack));
 
@@ -340,7 +404,7 @@ mod tests {
             ),
             lut,
         }];
-        let f3 = compose_preview(&base, &mut cache, &stack2, 16).unwrap();
+        let f3 = compose_preview(&base, &mut cache, &stack2, None, 16).unwrap();
         assert_ne!(f1.rgba, f3.rgba, "intensity 0 vs 1 must differ");
     }
 

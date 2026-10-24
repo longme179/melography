@@ -59,3 +59,18 @@ input[type="range"] { accent-color: var(--accent-400); }
 }
 .badge.warn { color: var(--warn); border-color: var(--warn); }
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ─── Film Lab (M2) ───────────────────────────────────────────────────── */
+.film-head {
+  margin-top: 0.75rem;
+  border-top: 1px solid rgba(127, 127, 127, 0.25);
+  padding-top: 0.6rem;
+}
+.film-head .link {
+  background: none;
+  border: none;
+  color: #7aa2f7;
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 0;
+}

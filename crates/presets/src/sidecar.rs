@@ -191,6 +191,20 @@ pub enum StageEntry {
         #[serde(flatten)]
         extra: BTreeMap<String, serde_json::Value>,
     },
+    /// M2 film chain: stock profile + adjustments (issues #10/#11).
+    /// The stock is referenced **by id** — data, not code (FILM_MODEL §J);
+    /// loading re-validates the profile, so a stale version fails loudly.
+    #[serde(rename_all = "snake_case")]
+    FilmStock {
+        stock: String,
+        stock_version: u32,
+        adjustments: melography_film::Adjustments,
+        lens: melography_film::LensParams,
+        #[serde(default = "crate::default_true")]
+        enabled: bool,
+        #[serde(flatten)]
+        extra: BTreeMap<String, serde_json::Value>,
+    },
     Lut {
         /// Library content hash (SHA-256 of the stored `.cube` bytes).
         instance: String,
@@ -242,6 +256,9 @@ impl TryInto<LutApply> for &StageEntry {
             }),
             StageEntry::FilmIdentity { .. } => Err(RecipeError::Io(
                 "film-identity stage is not a LUT stage".into(),
+            )),
+            StageEntry::FilmStock { .. } => Err(RecipeError::Io(
+                "film-stock stage is not a LUT stage".into(),
             )),
         }
     }

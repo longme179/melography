@@ -42,7 +42,7 @@ flowchart TD
 Tasks: `.cube` parser+validator (luts.md §1) · tetrahedral CPU + WGSL + independent oracle · intensity/mix + insertion points with encoding contracts · LUT library (content-addressed, provenance) · editor shell (S2 minimal: open/preview/compare/save recipe/export) · error UX for LUT states · sidecar v1 + fingerprint policy.
 **Exit:** a user imports a real `.cube`, previews on a real photo with correct declared encodings, before/after compares, exports JPEG/PNG/TIFF — original untouched; CPU/GPU parity ≤ tolerance; fuzz corpus green; cross-platform serialization stable.
 
-### M2 — Film lab core (effort L, uncertainty high — the differentiator)
+### M2 — Film lab core (effort L, uncertainty high — the differentiator) — **EXECUTED on `agent/m2-film-core` (see docs/quality/M2_FILM_QUALITY_REPORT.md)**
 **Scope:** FILM_MODEL.md implemented stage-by-stage with tests-first on CPU oracle.
 Tasks: stages A–I (curves+crosstalk first, then halation, grain, print/scan) · stock profile schema + 5 original artist-authored profiles · deterministic grain (statistical gates) · tiled-vs-monolithic suite · fitting/calibration harness (`tools/`) · golden film-chain cases · Film Lab panel UI (P3 depth) + stock browser (S3) · internal quality report published in-repo.
 **Exit:** algorithmic gates 100% green (FILM_MODEL §L); 5 profiles loadable with provenance labels; preview p50 ≤ 50 ms budget on reference hardware (or documented shortfall + fast-path plan); export 24MP targets measured honestly.
@@ -107,6 +107,22 @@ budgets stay provisional until those devices run the S1 harness.
 
 See `docs/research/spikes/{S1,S2,S3,S4}_REPORT.md` + `HEIF_PROBE.md`
 for full context; every number above is reproducible from the repo.
+
+### M2 measurements (2026-10-24, session 04) — film chain
+
+Dev sandbox (linux x86_64, **2 cores**, release build; CI re-runs the
+gates on all 3 OSes; owner reference machines still pending).
+
+| Line | M2 evidence (worst/best stock) | Status |
+|---|---|---|
+| Film resolve (per param change, incl. grain self-calibration) | 1.3–2.9 ms | fine — cached per param set |
+| Preview re-render p50 (2048×1536, full film chain) | **3.4–4.4 s** vs ≤ 50 ms interactions / ≤ 400 ms cold | **shortfall — documented cause + fast-path plan** (quality report §5: grain gather at pixel-area supersampling ≈ 225 cell-visits/px; the spec's correlated-noise fast path + threading + GPU spatial kernels are the plan) |
+| Export 24 MP (full film chain, CPU, tiled strips) | **8.3–18.4 s** vs ≤ 20 s CPU | **within budget** (2-core worst case) |
+| §L statistical gates (grain RMS/PSD/ρ, halation edge-spread, zoom, determinism, tiled≡mono) | all green; 2 real seam bugs caught + fixed by the tiled gate | **M2 exit criterion met** |
+| GPU film pixel-kernel parity (5 stocks × 3 paths × 2 polarities × 2 layouts) | gate ≤ 1e-3 on CI adapters (macos/windows); spatial-stage kernels = M3/M4 follow-up | pixel scope green; spatial pending (documented) |
+
+Full evidence: `docs/quality/M2_FILM_QUALITY_REPORT.md` (reproducible via
+`cargo test --release -p melography-film --test gates -- --ignored`).
 
 ### M1 additions (2026-10-24, session 03)
 

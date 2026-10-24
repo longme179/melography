@@ -13,10 +13,14 @@
 //!   user's edit history.
 
 pub mod sidecar;
+pub mod stock_profile;
 
 pub use sidecar::{
     migrate, Fingerprint, FingerprintMatch, ImageRef, Pipeline, SidecarV1, StageEntry,
     SIDECAR_SCHEMA, SIDECAR_VERSION,
+};
+pub use stock_profile::{
+    load_stock_profile, StockProfileError, StockRegistry, StockSummary, STOCK_PROFILE_SCHEMA_ID,
 };
 
 use melography_core::{Channels, ImageF32};

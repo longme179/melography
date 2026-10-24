@@ -1,14 +1,40 @@
 //! # melography-film
 //!
-//! The film-emulation chain (FILM_MODEL.md stages A–I). **M0 ships the
-//! identity chain only** — a real stage that passes pixels through the full
-//! stage contract (id, spec, determinism, halo) so the CLI roundtrip and the
-//! recipe schema exercise the real machinery. The emulsion math (curves,
-//! crosstalk, halation, grain, print/scan) is M2 work, tests-first on the
-//! CPU oracle per PLAN.md.
+//! The film-emulation chain (FILM_MODEL.md stages A–I). **M0 shipped the
+//! identity chain; M2 implements the emulsion math** (curves, crosstalk,
+//! halation, grain, print/scan) stage-by-stage, tests-first on the CPU
+//! oracle per PLAN.md issue #10.
 //!
 //! Contract (COLOR_PIPELINE §1): film stages consume and produce AP1-linear
 //! unbounded f32.
+//!
+//! Determinism discipline (S2): all math that feeds golden hashes runs in
+//! f64 with `+ − × ÷` plus `ln/exp/log10/sqrt/cos` (f64) — the S2 spike and
+//! the M1 golden gates proved bit-identical results for these ops across
+//! the Linux/Windows/macOS CI fleet. Integer randomness is u32-only
+//! (WGSL-portable). No threading, no data-dependent summation order.
+
+pub mod chain;
+pub mod curves;
+pub mod emulsion;
+pub mod frame;
+pub mod gpu_bridge;
+pub mod grain;
+pub mod hash;
+pub mod optics;
+pub mod print;
+pub mod profile;
+
+pub use curves::{CurveDirection, CurveError, MonotoneSpline};
+pub use emulsion::{Adjustments, CrossProcessMode, Emulsion, HalationKernel};
+pub use frame::{CropRule, FilmFrame, FRAME_LONG_MM, FRAME_SHORT_MM};
+pub use hash::{hash4, mix32, RandStream};
+pub use optics::{GaussianKernel, LensParams, Plane};
+pub use profile::{
+    CalibrationRef, Confidence, GaussianComponent, GrainParams, HalationChannel, InputAssumption,
+    InversionPath, LayerCurve, LayerLayout, Mat3, Polarity, PrintParams, ProfileError, Provenance,
+    SigmaCurve, StockProfile, STOCK_PROFILE_VERSION,
+};
 
 use melography_core::{ColorEncoding, DeterminismClass, ImageF32, Stage, StageId, StageSpec};
 use serde::{Deserialize, Serialize};
