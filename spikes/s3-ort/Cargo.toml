@@ -1,0 +1,16 @@
+[package]
+name = "s3-ort-spike"
+description = "Spike S3: ort/ONNX Runtime CPU packaging evidence — cold init, session creation, warm latency, artifact size (issue #5)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+ort = { version = "=2.0.0-rc.15", features = ["download-binaries"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }

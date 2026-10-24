@@ -1,0 +1,17 @@
+[package]
+name = "heif-probe-spike"
+description = "M0 HEIF/AVIF go-no-go probe: build + decode evidence for the system-libheif decode path (R-IN-2; PLAN M0 item 8)"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/longme179/melography"
+authors = ["MELOGRAPHY project"]
+publish = false
+# Zero third-party crates on purpose: the FFI surface is ~10 functions
+# against the installed libheif C API (headers under
+# /usr/include/*/libheif/*.h on Debian-family systems). No binding-crate
+# roulette; every signature was read from the installed headers.
+
+[profile.release]
+debug = true

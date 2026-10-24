@@ -1,0 +1,7 @@
+# Pinned toolchain — every agent, CI runner and the owner builds with the
+# same compiler (AGENTS.md §6; ADR-0003 reproducibility). Bump via a dedicated
+# `chore:` PR that shows `cargo update --dry-run` impact.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

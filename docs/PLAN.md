@@ -87,6 +87,27 @@ Tasks: packaging matrix (ADR-0005) · updater end-to-end on dummy→beta channel
 
 Preview (12MP source, fit-to-window on reference integrated GPU): cached/proxy interactions p50 ≤ 50 ms, p95 ≤ 120 ms, cold full re-render ≤ 400 ms. Export: 24MP ≤ 5 s GPU / ≤ 20 s CPU. Memory ≤ 2 GiB @ 50MP incl. caches. AI: per ADR-0004 §5. **These are stretch targets subject to measurement** — every CI perf test prints the hardware used.
 
+### M0 measurements (2026-10-24) — first re-pin
+
+Declared hardware so far: **GitHub-hosted CI runners** (ubuntu-latest /
+windows-latest / macos-latest, the only 3-OS fleet available) and the
+**dev sandbox** (linux x86_64, 2 cores). Owner-owned reference machines
+(integrated-GPU laptops) are still to be declared — the GPU-dependent
+budgets stay provisional until those devices run the S1 harness.
+
+| Budget line | M0 evidence | Re-pin |
+|---|---|---|
+| ORT cold init | 14.1 ms (S3, 2-core sandbox) | target stays ≤ 300 ms — 21× margin observed |
+| ORT warm invocation | 0.011 ms median (S3) | ~200 ms analysis budget: cleared |
+| Frame encode 1080p (CPU, preview transport) | raw 2.0 ms / PNG 12.3 ms / WebP-LL 6.4 ms (S1) | p50 50 ms interaction: CPU legs fit with > 25 ms headroom worst-case |
+| HEIC/AVIF decode (tiny fixtures) | 3.3 ms / 1.0 ms (HEIF probe) | per-image decode is not a budget risk; codec matrix owns it |
+| Updater check+download+verify | 27 + 28 ms @128 KiB (S4) | UX-invisible; not a user-facing budget line |
+| GPU readback throughput | **unmeasured** (no adapter in sandbox; CI macos Metal + owner devices pending) | preview p50/p95 and export 24MP ≤ 5 s stay **provisional** |
+| Webview IPC + blit | **unmeasured** (M1 app shell) | same — provisional; egui fallback armed (ADR-0001) |
+
+See `docs/research/spikes/{S1,S2,S3,S4}_REPORT.md` + `HEIF_PROBE.md`
+for full context; every number above is reproducible from the repo.
+
 ## 5. Risk register (top 10)
 
 | # | Risk | Likelihood | Impact | Mitigation / owner of trigger |

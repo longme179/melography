@@ -20,7 +20,8 @@ Problem → file map. Cold-start reading order for a new agent session: **AGENTS
 | Add/verify a reference repo/paper/dataset | `docs/research/REFERENCES.md` + `references/manifest.toml` + `skills/reference-research/SKILL.md` |
 | Write/change a workflow or CI behavior | `.github/workflows/ci.yml` + `skills/cross-platform-ci/SKILL.md` |
 | Find what the owner still must decide | `docs/research/OPEN_QUESTIONS.md` |
-| Verify why a stack/color/AI choice was made | ADR-0001 / 0002 / 0004 (+ spike reports at M0: `docs/research/spikes/`) |
+| Verify why a stack/color/AI choice was made | ADR-0001 / 0002 / 0004 + `docs/research/spikes/` (S1–S4 reports + `HEIF_PROBE.md`) |
+| Reproduce an M0 measurement (S1/S3/S4/HEIF) | `docs/research/spikes/*.md` → run the named cargo command in that report |
 
 ## ADR map
 
@@ -32,6 +33,6 @@ Boundary rituals → `session-handoff` · decisions → `architecture-decisions`
 
 ## Minimal cold-start sets
 
-- **M0 implementer:** AGENTS → STATE → ADR-0001 → ARCHITECTURE (§2, §3) → PLAN (M0) → skills: wgpu-and-cpu-parity, color-management.
+- **M0 implementer:** AGENTS → STATE → ADR-0001 → ARCHITECTURE (§2, §3) → PLAN (M0 + §4 re-pin) → `docs/research/spikes/` → skills: wgpu-and-cpu-parity, color-management.
 - **M2 film engineer:** AGENTS → STATE → FILM_MODEL → grain.md → film-color.md → skills: film-science-and-profiles.
 - **Release manager (owner-gated):** AGENTS → ADR-0005 → RELEASING → skills: secure-release-and-update, cross-platform-ci.

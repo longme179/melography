@@ -1,0 +1,62 @@
+# MELOGRAPHY Cargo workspace — introduced at M0 (issue #2).
+#
+# Layout rules (docs/ARCHITECTURE.md §2):
+#   * `crates/*` are the product crates. Nothing in `crates/*` may depend on
+#     `melography-app` or on Tauri types (enforced by review + cargo-deny bans).
+#   * `melography-app` (Tauri host) is introduced at M1 together with the
+#     editor shell; M0 defers it (PLAN.md M0 "Deferred" clause).
+#   * `spikes/*` are milestone-scoped risk-reduction harnesses (ADR-0001 §S1–S4).
+#     They are workspace members when they build everywhere; `spikes/s4-updater`
+#     and `spikes/heif-probe` carry platform-conditional system dependencies and
+#     are excluded, with their own CI jobs.
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/color",
+    "crates/io",
+    "crates/film",
+    "crates/lut",
+    "crates/gpu",
+    "crates/ai",
+    "crates/presets",
+    "crates/cli",
+    "spikes/s1-transport",
+    "spikes/s3-ort",
+]
+exclude = ["spikes/s4-updater", "spikes/heif-probe"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/longme179/melography"
+authors = ["MELOGRAPHY contributors"]
+
+[workspace.dependencies]
+# Internal crates
+melography-core = { path = "crates/core" }
+melography-color = { path = "crates/color" }
+melography-io = { path = "crates/io" }
+melography-film = { path = "crates/film" }
+melography-lut = { path = "crates/lut" }
+melography-gpu = { path = "crates/gpu" }
+melography-ai = { path = "crates/ai" }
+melography-presets = { path = "crates/presets" }
+
+# Shared third-party pins (exact minor ranges; Cargo.lock provides full pinning)
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.6", features = ["derive"] }
+image = { version = "0.25", default-features = false }
+png = "0.18"
+lcms2 = { version = "6.2", default-features = false, features = ["static"] }
+sha2 = "0.10"
+semver = { version = "1.0", features = ["serde"] }
+
+[profile.release]
+# Line tables keep release-mode benchmark backtraces meaningful (M0 budgets)
+# without paying full debug-info size in release artifacts.
+debug = "line-tables-only"

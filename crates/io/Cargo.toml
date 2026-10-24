@@ -1,0 +1,25 @@
+[package]
+name = "melography-io"
+description = "Image decode/sanitize/encode: JPEG/PNG/TIFF/WebP via `image`, orientation, ICC passthrough, license-clean synthetic charts (M0 codec matrix)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+melography-core = { workspace = true }
+image = { workspace = true, features = [
+    "jpeg",
+    "png",
+    "tiff",
+    "webp",
+] }
+thiserror = { workspace = true }
+bytemuck = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+melography-color = { workspace = true }
