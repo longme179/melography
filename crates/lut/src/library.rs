@@ -156,6 +156,23 @@ pub struct LutLibrary {
     root: PathBuf,
 }
 
+/// Write-then-flush-then-rename: the flush (`sync_all`) guarantees the
+/// data is on disk *before* the rename makes it visible, so an immediate
+/// read-back (verify-at-load) never races an unflushed file — the Windows
+/// CI flake this fixed hashed an empty blob (run 40077447188).
+fn atomic_write_durable(tmp: &Path, bytes: &[u8], dest: &Path) -> Result<(), LibraryError> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(tmp)
+        .map_err(|e| LibraryError::Io(format!("create {}: {e}", tmp.display())))?;
+    f.write_all(bytes)
+        .map_err(|e| LibraryError::Io(format!("write {}: {e}", tmp.display())))?;
+    f.sync_all()
+        .map_err(|e| LibraryError::Io(format!("sync {}: {e}", tmp.display())))?;
+    drop(f);
+    std::fs::rename(tmp, dest)
+        .map_err(|e| LibraryError::Io(format!("rename → {}: {e}", dest.display())))
+}
+
 impl LutLibrary {
     /// Open (or lazily create) a library under `root`. Does no I/O until an
     /// operation needs it (empty index is created on first import/save).
@@ -201,23 +218,6 @@ impl LutLibrary {
         let tmp = dir.join(".index.json.tmp");
         atomic_write_durable(&tmp, json.as_bytes(), &self.index_path())?;
         Ok(())
-    }
-
-    /// Write-then-flush-then-rename: the flush (`sync_all`) guarantees the
-    /// data is on disk *before* the rename makes it visible, so an immediate
-    /// read-back (verify-at-load) never races an unflushed file — the Windows
-    /// CI flake this fixed hashed an empty blob (run 40077447188).
-    fn atomic_write_durable(tmp: &Path, bytes: &[u8], dest: &Path) -> Result<(), LibraryError> {
-        use std::io::Write;
-        let mut f = std::fs::File::create(tmp)
-            .map_err(|e| LibraryError::Io(format!("create {}: {e}", tmp.display())))?;
-        f.write_all(bytes)
-            .map_err(|e| LibraryError::Io(format!("write {}: {e}", tmp.display())))?;
-        f.sync_all()
-            .map_err(|e| LibraryError::Io(format!("sync {}: {e}", tmp.display())))?;
-        drop(f);
-        std::fs::rename(tmp, dest)
-            .map_err(|e| LibraryError::Io(format!("rename → {}: {e}", dest.display())))
     }
 
     /// Import (or re-import) a `.cube` file: validate strictly, copy under
