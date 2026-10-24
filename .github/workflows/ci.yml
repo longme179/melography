@@ -64,6 +64,19 @@ jobs:
         run: bash -n scripts/fetch_refs.sh
       - name: Python compile
         run: python3 -m py_compile scripts/fetch_refs.py scripts/validate_docs.py
+      - name: LUT oracle fixture freshness (issue #7)
+        run: python3 tools/lut_oracle.py --verify crates/lut/tests/oracle_fixtures.json
+      - name: Architecture guard (ARCHITECTURE §2 — core stays UI-agnostic)
+        run: |
+          # The processing core (crates/*) must never depend on the shell —
+          # the precise form of the old global cargo-deny ban on tauri/wry
+          # (which could not be scoped per-graph and broke the app's own
+          # supply-chain gate).
+          if grep -rnE 'tauri|wry' crates/*/Cargo.toml; then
+            echo "::error::processing crates must not depend on the UI shell (ARCHITECTURE §2)"
+            exit 1
+          fi
+          echo "OK: no shell dependencies in crates/*"
 
   # ── Cross-OS tooling smoke (real commands on all 3 desktop OSes; catches
   #    platform breakage of the tooling itself before Rust exists) ───────────
