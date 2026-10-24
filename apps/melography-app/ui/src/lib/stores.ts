@@ -71,3 +71,69 @@ export const stocks = writable<Stock[]>([]);
 export const film = writable<FilmState | null>(null);
 
 export const filmActive = derived(film, ($f) => !!$f?.stock && $f?.enabled);
+
+// ── M3: tone stage + auto-lighting + model manager ─────────────────────────
+
+export interface WbGains {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export interface ToneParams {
+  ev: number;
+  highlights: number;
+  shadows: number;
+  wb: WbGains | null;
+  black_source: number | null;
+  black_target: number | null;
+  white_source: number | null;
+  white_target: number | null;
+}
+
+export interface SuggestionSource {
+  kind: "baseline" | "model";
+  name: string;
+  version: string;
+  weights_sha256: string | null;
+  accepted_utc: string;
+}
+
+export interface ToneState {
+  params: ToneParams | null;
+  source: SuggestionSource | null;
+}
+
+export interface Suggestion {
+  params: ToneParams;
+  notes: string[];
+  wb_cct_estimate_k: number | null;
+  engine: string;
+  engine_version: string;
+  analysis_ms: number;
+}
+
+export type ModelState =
+  | { state: "not_installed" }
+  | { state: "downloading"; bytes_done: number; total_bytes: number }
+  | { state: "verifying" }
+  | { state: "installing" }
+  | { state: "ready"; version: string }
+  | { state: "corrupt"; reason: string }
+  | { state: "missing"; reason: string };
+
+export interface ModelInfo {
+  id: string;
+  version: string;
+  task: string;
+  output_kind: string;
+  size_bytes: number;
+  weights_license: string;
+  sha256: string;
+  state: ModelState;
+  known_issues: string[];
+}
+
+export const tone = writable<ToneState | null>(null);
+export const suggestion = writable<Suggestion | null>(null);
+export const models = writable<ModelInfo[]>([]);

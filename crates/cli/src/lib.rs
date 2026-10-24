@@ -14,6 +14,7 @@
 //! tests and CI drive the exact user-facing paths.
 
 use melography_color as mcolor;
+use melography_color::tone::ToneParams;
 use melography_core::{Channels, ImageF32};
 use melography_film::FilmChain;
 use melography_io as mio;
@@ -309,6 +310,9 @@ pub struct ApplyOptions {
     pub via_lcms: bool,
     /// Write the sidecar next to the output (default true).
     pub write_sidecar: bool,
+    /// M3 tone stage (scene-referred WB/EV/HL-SH/shaping), applied after
+    /// decode→AP1 and before LUT/film. `None` = no tone stage.
+    pub tone: Option<ToneParams>,
 }
 
 impl ApplyOptions {
@@ -327,6 +331,7 @@ impl ApplyOptions {
             library_root: default_library_root(),
             via_lcms: false,
             write_sidecar: true,
+            tone: None,
         }
     }
 }
@@ -341,6 +346,27 @@ pub fn cmd_apply(opts: &ApplyOptions) -> serde_json::Value {
         Err(e) => {
             return serde_json::json!({"command": "apply", "error": e});
         }
+    };
+
+    // M3 tone stage (scene-referred) — first thing after S1, before LUT/film.
+    let (ap1, tone_report, tone_stage) = match &opts.tone {
+        Some(t) => {
+            let t0 = Instant::now();
+            let toned = mcolor::tone::apply(&ap1, t);
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            let report = serde_json::json!({"params": t, "apply_ms": ms});
+            (
+                toned,
+                report,
+                Some(StageEntry::Tone {
+                    params: *t,
+                    source: None,
+                    enabled: true,
+                    extra: Default::default(),
+                }),
+            )
+        }
+        None => (ap1.clone(), serde_json::json!(null), None),
     };
 
     // Optional LUT: strict-parse the file, import content-addressed, then
@@ -527,6 +553,9 @@ pub fn cmd_apply(opts: &ApplyOptions) -> serde_json::Value {
         if let Some(stage) = sidecar_lut_stage {
             sc.pipeline.stages.push(stage);
         }
+        if let Some(stage) = tone_stage {
+            sc.pipeline.stages.push(stage);
+        }
         let spath = opts.output.with_extension("melography.json");
         sc.save(&spath).expect("sidecar write");
         sidecar_sha = serde_json::json!(sha256_hex(sc.to_json().expect("sidecar json").as_bytes()));
@@ -542,6 +571,7 @@ pub fn cmd_apply(opts: &ApplyOptions) -> serde_json::Value {
         "via_lcms": use_lcms,
         "dims": [decoded.pixels.width(), decoded.pixels.height()],
         "lut": lut_report,
+        "tone": tone_report,
         "timings_ms": {
             "decode": decode_ms,
             "s1_to_ap1": s1_ms,
@@ -575,6 +605,8 @@ pub fn cmd_sidecar(path: &Path) -> serde_json::Value {
                     serde_json::json!({"stage": "film_identity", "enabled": enabled}),
                 StageEntry::FilmStock { stock, stock_version, enabled, .. } =>
                     serde_json::json!({"stage": "film_stock", "stock": stock, "stock_version": stock_version, "enabled": enabled}),
+                StageEntry::Tone { params, source, enabled, .. } =>
+                    serde_json::json!({"stage": "tone", "params": params, "source": source, "enabled": enabled}),
                 StageEntry::Lut { instance, insertion, intensity, declared_input, declared_output, enabled, .. } =>
                     serde_json::json!({
                         "stage": "lut", "instance": instance,
@@ -620,6 +652,8 @@ pub struct FilmApplyOptions {
     /// Strip height for the tiled executor (0 = monolithic).
     pub strip_h: u32,
     pub write_sidecar: bool,
+    /// M3 tone stage, applied before the film chain.
+    pub tone: Option<ToneParams>,
 }
 
 /// Resolve a stock reference (id or file path) to a validated profile.
@@ -681,6 +715,27 @@ pub fn cmd_film_apply(opts: &FilmApplyOptions) -> serde_json::Value {
         Err(e) => {
             return serde_json::json!({"command": "film apply", "error": e});
         }
+    };
+
+    // M3 tone stage — scene-referred corrections precede the film chain.
+    let (ap1, tone_report, tone_stage) = match &opts.tone {
+        Some(t) => {
+            let t0 = Instant::now();
+            let toned = mcolor::tone::apply(&ap1, t);
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            let report = serde_json::json!({"params": t, "apply_ms": ms});
+            (
+                toned,
+                report,
+                Some(StageEntry::Tone {
+                    params: *t,
+                    source: None,
+                    enabled: true,
+                    extra: Default::default(),
+                }),
+            )
+        }
+        None => (ap1, serde_json::json!(null), None),
     };
 
     let params = match melography_film::chain::FilmChainParams::new(profile.clone())
@@ -806,6 +861,9 @@ pub fn cmd_film_apply(opts: &FilmApplyOptions) -> serde_json::Value {
             enabled: opts.adjustments.enabled,
             extra: Default::default(),
         });
+        if let Some(stage) = tone_stage {
+            sc.pipeline.stages.push(stage);
+        }
         let spath = opts.output.with_extension("melography.json");
         sc.save(&spath).expect("sidecar write");
         sidecar_sha = serde_json::json!(sha256_hex(sc.to_json().expect("sidecar json").as_bytes()));
@@ -831,6 +889,144 @@ pub fn cmd_film_apply(opts: &FilmApplyOptions) -> serde_json::Value {
         },
         "strip_h": opts.strip_h,
         "format": format!("{:?}", opts.format),
+        "tone": tone_report,
         "sidecar_sha256": sidecar_sha,
     })
+}
+
+// ── AI commands (M3, issues #13/#14) ────────────────────────────────────────
+
+/// `ai suggest` — the non-ML auto-lighting baseline on a real image
+/// (decode → AP1 → ≤512 px proxy → deterministic suggestion → JSON).
+pub fn cmd_ai_suggest(input: &Path, proxy: u32) -> serde_json::Value {
+    use melography_ai as mai;
+    let t0 = Instant::now();
+    let (_decoded, ap1, _use_lcms, _decode_ms, _s1_ms) = match decode_to_ap1(input, false) {
+        Ok(v) => v,
+        Err(e) => return serde_json::json!({"command": "ai suggest", "error": e}),
+    };
+    let suggestion = mai::auto_light::suggest_proxy(&ap1, proxy);
+    let analysis_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    serde_json::json!({
+        "command": "ai suggest",
+        "engine": {
+            "id": mai::auto_light::BASELINE_ID,
+            "version": mai::auto_light::BASELINE_VERSION,
+            "kind": "baseline",
+            "model_free": true,
+        },
+        "input": input.display().to_string(),
+        "proxy_long_edge": proxy,
+        "params": suggestion.params,
+        "notes": suggestion.notes.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>(),
+        "wb_cct_estimate_k": suggestion.wb_cct_estimate_k,
+        "stats": {
+            "p001": suggestion.stats.p001,
+            "p005": suggestion.stats.p005,
+            "p50": suggestion.stats.p50,
+            "p99": suggestion.stats.p99,
+            "p995": suggestion.stats.p995,
+            "gray_rgb": suggestion.stats.gray_rgb,
+            "skin_fraction": suggestion.stats.skin_fraction,
+        },
+        "analysis_ms": analysis_ms,
+    })
+}
+
+/// `ai vet` — run the manifest vetting gate on a manifest JSON (issue #14:
+/// the gate is a CLI-verifiable workflow, not a hidden constant).
+pub fn cmd_ai_vet(manifest_path: &Path) -> serde_json::Value {
+    use melography_ai as mai;
+    let text = match std::fs::read_to_string(manifest_path) {
+        Ok(t) => t,
+        Err(e) => {
+            return serde_json::json!({
+                "command": "ai vet",
+                "error": format!("read {}: {e}", manifest_path.display())
+            })
+        }
+    };
+    let manifest: mai::ModelManifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            return serde_json::json!({
+                "command": "ai vet",
+                "error": format!("manifest parse: {e}"),
+                "manifest": manifest_path.display().to_string(),
+            })
+        }
+    };
+    match mai::vet(&manifest) {
+        Ok(()) => serde_json::json!({
+            "command": "ai vet",
+            "manifest": manifest_path.display().to_string(),
+            "id": manifest.id,
+            "version": manifest.version.to_string(),
+            "verdict": "pass",
+        }),
+        Err(e) => serde_json::json!({
+            "command": "ai vet",
+            "manifest": manifest_path.display().to_string(),
+            "id": manifest.id,
+            "version": manifest.version.to_string(),
+            "verdict": "reject",
+            "reasons": e.to_string(),
+        }),
+    }
+}
+
+/// `ai install` — offline install from a local weights file through the
+/// gate + SHA-256 + atomic pipeline (FileFetch; AI_MODELS §6).
+pub fn cmd_ai_install(manifest_path: &Path, weights: &Path, root: &Path) -> serde_json::Value {
+    use melography_ai as mai;
+    let text = match std::fs::read_to_string(manifest_path) {
+        Ok(t) => t,
+        Err(e) => {
+            return serde_json::json!({"command": "ai install", "error": format!("read {}: {e}", manifest_path.display())})
+        }
+    };
+    let manifest: mai::ModelManifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            return serde_json::json!({"command": "ai install", "error": format!("manifest parse: {e}")})
+        }
+    };
+    let mut mgr = mai::manager::ModelManager::open(root);
+    let cancel = melography_core::CancelToken::default();
+    let mut fetch = mai::manager::FileFetch {
+        path: weights.to_path_buf(),
+    };
+    match mgr.install(manifest, &mut fetch, &cancel) {
+        Ok(()) => serde_json::json!({
+            "command": "ai install",
+            "root": root.display().to_string(),
+            "state": "ready",
+        }),
+        Err(e) => serde_json::json!({
+            "command": "ai install",
+            "root": root.display().to_string(),
+            "error": e.to_string(),
+        }),
+    }
+}
+
+/// `ai models` — list the registry (states per AI_MODELS §6).
+pub fn cmd_ai_models(root: &Path) -> serde_json::Value {
+    use melography_ai as mai;
+    let mgr = mai::manager::ModelManager::open(root);
+    serde_json::json!({
+        "command": "ai models",
+        "root": root.display().to_string(),
+        "models": mgr.list(),
+    })
+}
+
+/// `ai delete` — remove a model and all its files immediately.
+pub fn cmd_ai_delete(root: &Path, id: &str) -> serde_json::Value {
+    use melography_ai as mai;
+    let mut mgr = mai::manager::ModelManager::open(root);
+    match mgr.delete(id) {
+        Ok(()) => serde_json::json!({"command": "ai delete", "id": id, "deleted": true}),
+        Err(e) => serde_json::json!({"command": "ai delete", "id": id, "error": e.to_string()}),
+    }
 }

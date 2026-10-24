@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 melography-core = { workspace = true }
+melography-color = { workspace = true }
 melography-film = { workspace = true }
 melography-lut = { workspace = true }
 thiserror = { workspace = true }

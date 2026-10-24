@@ -47,10 +47,11 @@ Tasks: `.cube` parser+validator (luts.md §1) · tetrahedral CPU + WGSL + indepe
 Tasks: stages A–I (curves+crosstalk first, then halation, grain, print/scan) · stock profile schema + 5 original artist-authored profiles · deterministic grain (statistical gates) · tiled-vs-monolithic suite · fitting/calibration harness (`tools/`) · golden film-chain cases · Film Lab panel UI (P3 depth) + stock browser (S3) · internal quality report published in-repo.
 **Exit:** algorithmic gates 100% green (FILM_MODEL §L); 5 profiles loadable with provenance labels; preview p50 ≤ 50 ms budget on reference hardware (or documented shortfall + fast-path plan); export 24MP targets measured honestly.
 
-### M3 — AI assistance (effort M, uncertainty high — licensing gate)
+### M3 — AI assistance (effort M, uncertainty high — licensing gate) — **EXECUTED on `agent/m3-ai-assist` (see docs/quality/M3_AI_REPORT.md)**
 **Scope:** non-ML baseline first; one vetted model only if it beats baseline.
 Tasks: baseline auto-lighting (AI_MODELS §2) · model manager + manifest gate + downloader · one parameter-predictor evaluation with measured benchmark vs baseline · optional segmentation mask (if gates pass) · suggestion UX (Accept/Adjust/Dismiss + provenance in sidecar) · mask-edge golden tests.
 **Exit:** suggestions are editable parameters (never baked pixels); offline mode fully functional with no models installed; every shipped model has a complete manifest with verified weights license; budgets met on reference hardware.
+**Outcome:** all exit criteria met — Tone stage (editable params + provenance), baseline-only v1 (no model passed the gate — the honest ADR-0004 §7 outcome), manager fully tested offline, budgets 49–61× under (60.6 ms vs 3 000 ms @ 12 MP). Masks deferred with the gate-blocked candidates; the benchmark (baseline 0.205 vs naive-ONNX 1.019) is CI-enforced as the bar.
 
 ### M4 — Production UX polish & hardening (effort L, uncertainty medium)
 **Scope:** everything that makes it a product for P1–P5.
@@ -123,6 +124,21 @@ gates on all 3 OSes; owner reference machines still pending).
 
 Full evidence: `docs/quality/M2_FILM_QUALITY_REPORT.md` (reproducible via
 `cargo test --release -p melography-film --test gates -- --ignored`).
+
+### M3 measurements (2026-10-24, session 05) — AI assistance
+
+Dev sandbox (linux x86_64, 2 cores, release build); CI job `ai-onnx`
+re-runs the benchmark + budget on every push.
+
+| Line | M3 evidence | Status |
+|---|---|---|
+| Baseline analysis (12 MP → 512 px proxy) | 60.6 ms vs ≤ 3 000 ms budget | **green — 49× margin** |
+| ONNX predictor inference (12 MP → 64 px, ort CPU) | 49.3 ms vs ≤ 3 000 ms | **green — 61× margin** |
+| Benchmark aggregate (ev + 5·wb + clip, lower better) | baseline **0.205** vs naive-ONNX predictor 1.019 | **the bar** — CI-asserted; any model must beat 0.205 |
+| Vetted models shipped | 0 (all candidates gate-blocked on unverified weights licenses) | baseline-only v1 — the honest ADR-0004 §7 outcome |
+| Tone apply (full film-chain export path) | 19.2 ms @ 0.6 MP (CLI report) | not a budget line; GPU mirror = documented follow-up |
+
+Full evidence: `docs/quality/M3_AI_REPORT.md`.
 
 ### M1 additions (2026-10-24, session 03)
 

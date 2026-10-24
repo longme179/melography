@@ -177,3 +177,74 @@ export async function listStocks(): Promise<Stock[]> {
 export async function getFilm(): Promise<FilmState> {
   return invoke<FilmState>("get_film");
 }
+
+// ── M3: tone + auto-lighting + models ──────────────────────────────────────
+
+import type {
+  ModelInfo,
+  Suggestion,
+  ToneParams,
+  ToneState,
+  SuggestionSource,
+} from "./stores";
+
+export async function getTone(): Promise<ToneState> {
+  return invoke<ToneState>("get_tone");
+}
+
+export async function setTone(args: {
+  params: ToneParams | null;
+  source?: SuggestionSource | null;
+}): Promise<ToneState> {
+  return invoke<ToneState>("set_tone", { args });
+}
+
+export async function autoLightSuggest(): Promise<Suggestion> {
+  return invoke<Suggestion>("auto_light_suggest");
+}
+
+export async function suggestionProvenance(
+  kind: string,
+  name: string,
+  version: string,
+): Promise<SuggestionSource> {
+  return invoke<SuggestionSource>("suggestion_provenance", {
+    kind,
+    name,
+    version,
+  });
+}
+
+export async function listModels(): Promise<ModelInfo[]> {
+  return invoke<ModelInfo[]>("list_models");
+}
+
+export async function installModelFromFile(
+  manifestPath: string,
+  weightsPath: string,
+): Promise<ModelInfo[]> {
+  return invoke<ModelInfo[]>("install_model_from_file", {
+    manifestPath,
+    weightsPath,
+  });
+}
+
+export async function deleteModel(id: string): Promise<ModelInfo[]> {
+  return invoke<ModelInfo[]>("delete_model", { id });
+}
+
+export async function manifestFileDialog(): Promise<string | null> {
+  const picked = await open({
+    multiple: false,
+    filters: [{ name: "Model manifest", extensions: ["json"] }],
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
+export async function weightsFileDialog(): Promise<string | null> {
+  const picked = await open({
+    multiple: false,
+    filters: [{ name: "ONNX weights", extensions: ["onnx"] }],
+  });
+  return typeof picked === "string" ? picked : null;
+}

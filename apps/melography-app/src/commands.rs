@@ -14,11 +14,14 @@ use crate::error::AppError;
 use crate::render;
 use crate::state::EditorState;
 use melography_cli::{ApplyFormat, ApplyOptions};
+use melography_color::tone::ToneParams;
 use melography_lut::stage::LutApply;
 use melography_lut::{LutEncoding, LutRecord};
-use melography_presets::sidecar::{Fingerprint, SidecarV1, StageEntry};
+use melography_presets::sidecar::{
+    Fingerprint, SidecarV1, StageEntry, SuggestionKind, SuggestionSource,
+};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::State;
 
@@ -87,8 +90,24 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
             StageEntry::Lut { .. } => <&StageEntry as TryInto<LutApply>>::try_into(s).ok(),
             StageEntry::FilmIdentity { .. } => None,
             StageEntry::FilmStock { .. } => None,
+            StageEntry::Tone { .. } => None,
         })
         .collect();
+    // M3: resume the tone stage (params + accepted-suggestion provenance).
+    let tone = sidecar
+        .pipeline
+        .stages
+        .iter()
+        .find_map(|s| match s {
+            StageEntry::Tone {
+                params,
+                source,
+                enabled,
+                ..
+            } => Some((if *enabled { Some(*params) } else { None }, source.clone())),
+            _ => None,
+        })
+        .unwrap_or((None, None));
 
     st.session = Some(crate::state::OpenSession {
         source_path: path.clone(),
@@ -99,6 +118,10 @@ pub fn open_image(state: St, path: String) -> Result<ImageInfo, AppError> {
         fingerprint: fingerprint.clone(),
     });
     st.lut_stack = lut_stack;
+    st.tone = crate::state::ToneState {
+        params: tone.0,
+        source: tone.1,
+    };
     st.sidecar = Some(sidecar);
     st.sidecar_path = Some(sidecar_path);
     st.dirty = false;
@@ -137,11 +160,13 @@ pub fn render_preview(state: St, max_dim: u32) -> Result<tauri::ipc::Response, A
         .clone();
     let stack = st.resolve_stack()?;
     let film_leg = st.film_leg();
+    let tone_params = st.tone.params.filter(|p| !p.is_identity());
     let frame = render::compose_preview(
         &base,
         &mut st.preview_cache,
         &stack,
         film_leg.as_ref(),
+        tone_params.as_ref(),
         max_dim,
     )?;
     Ok(tauri::ipc::Response::new(frame.to_wire()))
@@ -347,6 +372,7 @@ pub fn save_recipe(state: St) -> Result<(), AppError> {
         .ok_or_else(|| AppError::new("session.none", "no sidecar to save"))?;
     sc.pipeline.stages.clear();
     let film_snapshot = st.film.clone();
+    let tone_snapshot = st.tone.clone();
     match &film_snapshot.stock {
         Some(stock) => sc.pipeline.stages.push(StageEntry::FilmStock {
             stock: stock.id.clone(),
@@ -360,6 +386,14 @@ pub fn save_recipe(state: St) -> Result<(), AppError> {
             enabled: true,
             extra: Default::default(),
         }),
+    }
+    if let Some(tp) = tone_snapshot.params {
+        sc.pipeline.stages.push(StageEntry::Tone {
+            params: tp,
+            source: tone_snapshot.source.clone(),
+            enabled: true,
+            extra: Default::default(),
+        });
     }
     for a in &stack_snapshot {
         sc.pipeline.stages.push(StageEntry::from(a));
@@ -424,6 +458,7 @@ pub fn export_image(
     opts.quality = args.quality;
     opts.lut = lut_path;
     opts.library_root = st.library_root();
+    opts.tone = st.tone.params.filter(|p| !p.is_identity());
     if let Some(a) = apply {
         opts.lut_in = a.declared_input;
         opts.lut_out = a.declared_output;
@@ -446,6 +481,7 @@ pub fn export_image(
             quality: args.quality,
             strip_h: 512,
             write_sidecar: false,
+            tone: st.tone.params.filter(|p| !p.is_identity()),
         };
         fopts.adjustments.enabled = st.film.adjustments.enabled;
         let report = melography_cli::cmd_film_apply(&fopts);
@@ -580,3 +616,172 @@ pub fn set_film(state: St, args: SetFilmArgs) -> Result<FilmStateJson, AppError>
         adjustments: st.film.adjustments.clone(),
     })
 }
+
+// ─── Tone stage + auto-lighting (M3, issue #13) ─────────────────────────────
+
+#[derive(Serialize, Clone)]
+pub struct ToneStateJson {
+    /// None = no tone stage (identity).
+    pub params: Option<ToneParams>,
+    pub source: Option<SuggestionSource>,
+}
+
+#[tauri::command]
+pub fn get_tone(state: St) -> Result<ToneStateJson, AppError> {
+    let st = state.lock().unwrap();
+    Ok(ToneStateJson {
+        params: st.tone.params,
+        source: st.tone.source.clone(),
+    })
+}
+
+#[derive(Deserialize)]
+pub struct SetToneArgs {
+    /// `None` removes the tone stage.
+    pub params: Option<ToneParams>,
+    /// Provenance when the params come from an accepted suggestion.
+    #[serde(default)]
+    pub source: Option<SuggestionSource>,
+}
+
+#[tauri::command]
+pub fn set_tone(state: St, args: SetToneArgs) -> Result<ToneStateJson, AppError> {
+    let mut st = state.lock().unwrap();
+    let params = args.params.map(|p| p.sanitized());
+    st.tone = crate::state::ToneState {
+        params,
+        source: args.source,
+    };
+    st.dirty = true;
+    Ok(ToneStateJson {
+        params: st.tone.params,
+        source: st.tone.source.clone(),
+    })
+}
+
+/// Baseline auto-lighting suggestion (deterministic, model-free — the
+/// quality bar, ADR-0004 §1a). Analysis runs on a ≤512 px proxy.
+#[derive(Serialize)]
+pub struct SuggestionJson {
+    pub params: ToneParams,
+    /// Machine-readable notes the UI localizes.
+    pub notes: Vec<String>,
+    pub wb_cct_estimate_k: Option<f32>,
+    pub engine: String,
+    pub engine_version: String,
+    pub analysis_ms: f64,
+}
+
+#[tauri::command]
+pub fn auto_light_suggest(state: St) -> Result<SuggestionJson, AppError> {
+    let st = state.lock().unwrap();
+    let session = st
+        .session
+        .as_ref()
+        .ok_or_else(|| AppError::new("session.none", "no image is open"))?;
+    let t = std::time::Instant::now();
+    let s = melography_ai::auto_light::suggest_proxy(&session.ap1, 512);
+    Ok(SuggestionJson {
+        params: s.params,
+        notes: s.notes.iter().map(|n| format!("{n:?}")).collect(),
+        wb_cct_estimate_k: s.wb_cct_estimate_k,
+        engine: melography_ai::auto_light::BASELINE_ID.to_string(),
+        engine_version: melography_ai::auto_light::BASELINE_VERSION.to_string(),
+        analysis_ms: t.elapsed().as_secs_f64() * 1000.0,
+    })
+}
+
+/// Fresh provenance block for an accepted suggestion (called by the UI on
+/// Accept; the timestamp is taken here so it is honest server-side).
+#[tauri::command]
+pub fn suggestion_provenance(kind: String, name: String, version: String) -> SuggestionSource {
+    SuggestionSource {
+        kind: if kind == "model" {
+            SuggestionKind::Model
+        } else {
+            SuggestionKind::Baseline
+        },
+        name,
+        version,
+        weights_sha256: None,
+        accepted_utc: now_rfc3339(),
+    }
+}
+
+fn now_rfc3339() -> String {
+    // Minimal UTC RFC3339 without a chrono dependency (days-from-civil
+    // algorithm; the provenance stamp needs second precision only).
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    let days = secs / 86_400;
+    let rem = secs % 86_400;
+    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    // Howard Hinnant's civil_from_days.
+    let z = (days as i64) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+}
+
+// ─── model manager (M3, issues #13/#14) ─────────────────────────────────────
+
+fn models_root(st: &EditorState) -> PathBuf {
+    st.library_root().join("models")
+}
+
+#[tauri::command]
+pub fn list_models(state: St) -> Result<Vec<melography_ai::manager::ModelInfo>, AppError> {
+    let st = state.lock().unwrap();
+    let mgr = melography_ai::manager::ModelManager::open(models_root(&st));
+    Ok(mgr.list())
+}
+
+/// Offline install from a local manifest + weights file (the owner-side
+/// evaluation path; the network downloader ships with the first
+/// gate-passing model — see manager.rs docs).
+#[tauri::command]
+pub fn install_model_from_file(
+    state: St,
+    manifest_path: String,
+    weights_path: String,
+) -> Result<Vec<melography_ai::manager::ModelInfo>, AppError> {
+    let st = state.lock().unwrap();
+    let manifest: melography_ai::ModelManifest = serde_json::from_str(
+        &std::fs::read_to_string(&manifest_path)
+            .map_err(|e| AppError::new("model.manifest_read", e.to_string()))?,
+    )
+    .map_err(|e| AppError::new("model.manifest_parse", e.to_string()))?;
+    let mut mgr = melography_ai::manager::ModelManager::open(models_root(&st));
+    let cancel = melography_core::CancelToken::default();
+    let mut fetch = melography_ai::manager::FileFetch {
+        path: PathBuf::from(weights_path),
+    };
+    mgr.install(manifest, &mut fetch, &cancel)
+        .map_err(|e| AppError::new("model.install", e.to_string()))?;
+    Ok(mgr.list())
+}
+
+#[tauri::command]
+pub fn delete_model(
+    state: St,
+    id: String,
+) -> Result<Vec<melography_ai::manager::ModelInfo>, AppError> {
+    let st = state.lock().unwrap();
+    let mut mgr = melography_ai::manager::ModelManager::open(models_root(&st));
+    mgr.delete(&id)
+        .map_err(|e| AppError::new("model.delete", e.to_string()))?;
+    Ok(mgr.list())
+}
+
+// Keep the Path import used (install path strings come from the dialog).
+#[allow(dead_code)]
+fn _path_anchor(_p: &Path) {}

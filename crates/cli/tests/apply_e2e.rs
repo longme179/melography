@@ -10,17 +10,16 @@ use melography_lut::LutEncoding;
 use melography_presets::sidecar::{SidecarV1, StageEntry};
 use std::path::PathBuf;
 
-fn workdir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!(
-        "melography-m1-e2e-{}-{}",
-        name,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+/// Unique, panic-safe temp dir (guard + path). Replaces the hand-rolled
+/// nanos-clock naming — same macOS µs-granularity collision class as the
+/// lut crate flake (PR #22 run 40086829632); cleanup is automatic on drop.
+fn workdir(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let guard = tempfile::Builder::new()
+        .prefix(&format!("melography-m1-e2e-{name}-"))
+        .tempdir()
+        .unwrap();
+    let path = guard.path().to_path_buf();
+    (guard, path)
 }
 
 /// A real-world-shaped 17³ "teal & orange" look LUT (deterministic).
@@ -83,7 +82,7 @@ fn opts_for(dir: &std::path::Path, name: &str) -> ApplyOptions {
 
 #[test]
 fn lut_parse_reports_valid_and_invalid() {
-    let dir = workdir("parse");
+    let (_td, dir) = workdir("parse");
     let good = dir.join("good.cube");
     std::fs::write(&good, look_cube_17()).unwrap();
     let report = cmd_lut_parse(&good);
@@ -99,12 +98,11 @@ fn lut_parse_reports_valid_and_invalid() {
         .as_str()
         .unwrap()
         .contains("entry count"));
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 fn apply_identity_lut_matches_plain_export_within_tolerance() {
-    let dir = workdir("identity");
+    let (_td, dir) = workdir("identity");
     let src = source_png(&dir);
     let lut_path = dir.join("identity.cube");
     std::fs::write(&lut_path, identity_cube_17()).unwrap();
@@ -137,12 +135,11 @@ fn apply_identity_lut_matches_plain_export_within_tolerance() {
         "identity LUT changed pixels: max |Δ| = {worst:.3e} (code-value domain)"
     );
     let _ = src;
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 fn apply_look_lut_end_to_end_all_three_formats() {
-    let dir = workdir("look");
+    let (_td, dir) = workdir("look");
     source_png(&dir);
     let lut_path = dir.join("look.cube");
     std::fs::write(&lut_path, look_cube_17()).unwrap();
@@ -247,12 +244,11 @@ fn apply_look_lut_end_to_end_all_three_formats() {
         report["hashes"]["output_file"].as_str().unwrap(),
         "re-apply from the untouched original is deterministic"
     );
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 fn apply_missing_or_corrupt_lut_errors_explicitly() {
-    let dir = workdir("errors");
+    let (_td, dir) = workdir("errors");
     source_png(&dir);
 
     // Malformed LUT → structured error naming the file.
@@ -290,5 +286,4 @@ fn apply_missing_or_corrupt_lut_errors_explicitly() {
         load_err.to_string().contains("integrity"),
         "expected ChecksumMismatch, got: {load_err}"
     );
-    std::fs::remove_dir_all(&dir).ok();
 }

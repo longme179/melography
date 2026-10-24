@@ -19,8 +19,14 @@ melography-io = { workspace = true }
 melography-film = { workspace = true }
 melography-presets = { workspace = true }
 melography-lut = { workspace = true }
+melography-ai = { workspace = true }
 sha2 = { workspace = true }
 bytemuck = "1"
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# Unique panic-safe temp dirs (see the lut crate note; same macOS µs-clock
+# collision class fixed repo-wide).
+tempfile = "3"

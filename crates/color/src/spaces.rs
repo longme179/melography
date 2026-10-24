@@ -152,6 +152,70 @@ pub fn bradford_adapt(src: Chromaticity, dst: Chromaticity) -> Mat3 {
         * BRADFORD
 }
 
+/// Bradford cone responses of the AP1 working white (unit Y) — the neutral
+/// anchor for von Kries white-balance gains (M3 `tone`).
+#[must_use]
+pub fn ap1_white_cones() -> [f64; 3] {
+    BRADFORD.apply(xyz_from_xy(white::ACES))
+}
+
+/// AP1→AP1 white-balance matrix from **cone-space gains** (M3 tone stage).
+///
+/// `gains = [1, 1, 1]` is the **exact** identity (the sandwich uses
+/// `AP1_TO_XYZ⁻¹`, not the rounded published inverse, so the identity case
+/// is bit-exact). Any other positive triple applies a von Kries diagonal in
+/// Bradford cone space relative to the AP1 white:
+/// `M = AP1←XYZ · M_A⁻¹ · diag(g) · M_A · XYZ←AP1`. Gains are the
+/// *correction* (they neutralize a cast whose cone signature is their
+/// reciprocal, per the von Kries model) — see `tone::estimate_cct_k`.
+#[must_use]
+pub fn wb_gains_to_ap1(gains: [f64; 3]) -> Mat3 {
+    let inv_a = BRADFORD.inverse().expect("Bradford is invertible");
+    let inv_ap1 = AP1_TO_XYZ
+        .inverse()
+        .expect("AP1 primaries are non-degenerate");
+    inv_ap1 * (inv_a * diag(gains) * BRADFORD) * AP1_TO_XYZ
+}
+
+/// McCamy (1992) correlated-color-temperature estimate for a chromaticity.
+/// Display-only heuristic for the tone/WB UI (valid near the Planckian
+/// locus; returns `None` for degenerate points).
+#[must_use]
+pub fn cct_from_chromaticity(c: Chromaticity) -> Option<f64> {
+    if !(0.0..=1.0).contains(&c.x) || !(0.0..=1.0).contains(&c.y) || c.y <= 1e-9 {
+        return None;
+    }
+    let n = (c.x - 0.3320) / (0.1858 - c.y);
+    let cct = 449.0 * n.powi(3) + 3525.0 * n.powi(2) + 6823.3 * n + 5520.33;
+    (1000.0..=30_000.0).contains(&cct).then_some(cct)
+}
+
+/// Bradford cone→XYZ matrix (M_A⁻¹) — public for the tone-stage gain
+/// helpers (`tone::estimate_cct_k`).
+#[must_use]
+pub fn bradford_cone_to_xyz() -> Mat3 {
+    BRADFORD.inverse().expect("Bradford is invertible")
+}
+
+/// Cone-space white-balance gains that neutralize a measured scene gray
+/// (AP1 linear RGB): `gains_i = white_cone_i / observed_cone_i` (von Kries
+/// analysis half; the tone stage's `apply` is the synthesis half).
+#[must_use]
+pub fn wb_gains_for_ap1_gray(gray: [f32; 3]) -> [f64; 3] {
+    let xyz = AP1_TO_XYZ.apply_f32(gray);
+    let obs = BRADFORD.apply([f64::from(xyz[0]), f64::from(xyz[1]), f64::from(xyz[2])]);
+    let w = ap1_white_cones();
+    let mut gains = [1.0; 3];
+    for i in 0..3 {
+        gains[i] = if obs[i].abs() > 1e-9 {
+            w[i] / obs[i]
+        } else {
+            1.0
+        };
+    }
+    gains
+}
+
 /// Composed fast-path matrix: linear sRGB (D65) → AP1 linear (ACES white):
 /// `M_xyz←ap1 · Bradford(D65→ACES) · M_xyz←srgb`.
 #[must_use]

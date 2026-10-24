@@ -17,6 +17,8 @@
   import Viewport from "./components/Viewport.svelte";
   import LutPanel from "./components/LutPanel.svelte";
   import FilmLab from "./components/FilmLab.svelte";
+  import TonePanel from "./components/TonePanel.svelte";
+  import ModelManager from "./components/ModelManager.svelte";
   import StockBrowser from "./components/StockBrowser.svelte";
   import ExportDialog from "./components/ExportDialog.svelte";
   import ImportLutDialog from "./components/ImportLutDialog.svelte";
@@ -63,6 +65,11 @@
   }
 
   function onLutChanged() {
+    viewport?.refresh();
+    refreshState();
+  }
+
+  function onToneChanged() {
     viewport?.refresh();
     refreshState();
   }
@@ -126,6 +133,8 @@
       </div>
       <FilmLab />
       <StockBrowser bind:open={stockBrowserOpen} />
+      <TonePanel onChange={onToneChanged} />
+      <ModelManager />
     </aside>
   </main>
   <footer class="statusbar mono">

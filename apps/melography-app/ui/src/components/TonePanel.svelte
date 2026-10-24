@@ -1,0 +1,347 @@
+<script lang="ts">
+  /** Tone panel (M3, issue #13): scene-referred corrections + the baseline
+   *  auto-lighting suggestion (Accept / Adjust / Dismiss — AI_MODELS §7).
+   *  Suggestions become editable parameters; provenance is recorded in the
+   *  sidecar on Accept (ADR-0004 §6). */
+  import {
+    autoLightSuggest,
+    getTone,
+    setTone,
+    suggestionProvenance,
+  } from "../lib/ipc";
+  import { t } from "../lib/i18n";
+  import { suggestion, tone, toast, type ToneParams } from "../lib/stores";
+
+  export let onChange: () => void = () => {};
+
+  let busy = false;
+
+  const DEFAULT_PARAMS: ToneParams = {
+    ev: 0,
+    highlights: 0,
+    shadows: 0,
+    wb: null,
+    black_source: null,
+    black_target: null,
+    white_source: null,
+    white_target: null,
+  };
+
+  $: params = $tone?.params ?? DEFAULT_PARAMS;
+
+  async function push(patch: Partial<ToneParams>, source = null) {
+    if (busy) return;
+    busy = true;
+    try {
+      const next = { ...params, ...patch };
+      const state = await setTone({ params: next, source });
+      tone.set(state);
+      onChange();
+    } catch (e) {
+      toast.set(String(e));
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function reset() {
+    if (busy) return;
+    busy = true;
+    try {
+      tone.set(await setTone({ params: null, source: null }));
+      suggestion.set(null);
+      onChange();
+    } catch (e) {
+      toast.set(String(e));
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function suggest() {
+    if (busy) return;
+    busy = true;
+    try {
+      suggestion.set(await autoLightSuggest());
+    } catch (e) {
+      toast.set(String(e));
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** Accept: apply + record provenance (AI_MODELS §7). */
+  async function accept() {
+    const s = $suggestion;
+    if (!s) return;
+    const source = await suggestionProvenance("baseline", s.engine, s.engine_version);
+    await push(s.params, source);
+    suggestion.set(null);
+  }
+
+  /** Adjust: load into the sliders, no provenance (user owns the values). */
+  function adjust() {
+    const s = $suggestion;
+    if (!s) return;
+    push(s.params);
+    suggestion.set(null);
+  }
+
+  function dismiss() {
+    suggestion.set(null);
+  }
+
+  function noteKey(n: string): string {
+    return `suggest.notes.${n}`;
+  }
+
+  function setWb(key: "r" | "g" | "b", v: number) {
+    const wb = params.wb ?? { r: 1, g: 1, b: 1 };
+    push({ wb: { ...wb, [key]: v } });
+  }
+
+  function fmt(v: number, digits = 2): string {
+    return (v >= 0 ? "+" : "") + v.toFixed(digits);
+  }
+
+  getTone().then((s) => tone.set(s)).catch(console.error);
+</script>
+
+<section class="panel">
+  <div class="head">
+    <h2>{t("tone.title")}</h2>
+    <div class="actions">
+      <button class="primary" disabled={busy} on:click={suggest}>
+        {t("tone.auto")}
+      </button>
+      {#if $tone?.params}
+        <button disabled={busy} on:click={reset}>{t("tone.reset")}</button>
+      {/if}
+    </div>
+  </div>
+
+  {#if $suggestion}
+    <div class="card" role="status">
+      <div class="card-title">{t("suggest.title")}</div>
+      <div class="mono summary">
+        EV {fmt($suggestion.params.ev)}
+        {#if $suggestion.params.highlights}
+          · {t("tone.highlights")} {fmt($suggestion.params.highlights, 0)}
+        {/if}
+        {#if $suggestion.params.shadows}
+          · {t("tone.shadows")} {fmt($suggestion.params.shadows, 0)}
+        {/if}
+        {#if $suggestion.params.wb}
+          · WB
+          {#if $suggestion.wb_cct_estimate_k}
+            ≈ {Math.round($suggestion.wb_cct_estimate_k)} K
+          {:else}
+            {fmt($suggestion.params.wb.r)} / {fmt($suggestion.params.wb.g)} / {fmt($suggestion.params.wb.b)}
+          {/if}
+        {/if}
+      </div>
+      {#if $suggestion.notes.length}
+        <ul class="notes">
+          {#each $suggestion.notes as n (n)}
+            <li>{t(noteKey(n))}</li>
+          {/each}
+        </ul>
+      {/if}
+      <div class="meta mono">
+        {$suggestion.engine} v{$suggestion.engine_version} ·
+        {$suggestion.analysis_ms.toFixed(0)} ms · {t("suggest.model_free")}
+      </div>
+      <div class="actions">
+        <button class="primary" on:click={accept}>{t("suggest.accept")}</button>
+        <button on:click={adjust}>{t("suggest.adjust")}</button>
+        <button on:click={dismiss}>{t("suggest.dismiss")}</button>
+      </div>
+    </div>
+  {/if}
+
+  {#if $tone?.params}
+    <label class="row">
+      <span>{t("tone.ev")}</span>
+      <input
+        type="range"
+        min="-3"
+        max="3"
+        step="0.05"
+        value={params.ev}
+        on:change={(e) => push({ ev: Number(e.currentTarget.value) })}
+      />
+      <span class="mono val">{fmt(params.ev)}</span>
+    </label>
+    <label class="row">
+      <span>{t("tone.highlights")}</span>
+      <input
+        type="range"
+        min="-100"
+        max="100"
+        step="1"
+        value={params.highlights}
+        on:change={(e) => push({ highlights: Number(e.currentTarget.value) })}
+      />
+      <span class="mono val">{fmt(params.highlights, 0)}</span>
+    </label>
+    <label class="row">
+      <span>{t("tone.shadows")}</span>
+      <input
+        type="range"
+        min="-100"
+        max="100"
+        step="1"
+        value={params.shadows}
+        on:change={(e) => push({ shadows: Number(e.currentTarget.value) })}
+      />
+      <span class="mono val">{fmt(params.shadows, 0)}</span>
+    </label>
+    <label class="row">
+      <span>{t("tone.wb")}</span>
+      <input
+        type="checkbox"
+        checked={params.wb !== null}
+        on:change={(e) =>
+          push({
+            wb: e.currentTarget.checked
+              ? { r: 1, g: 1, b: 1 }
+              : null,
+          })}
+      />
+    </label>
+    {#if params.wb}
+      <label class="row sub">
+        <span>R</span>
+        <input
+          type="range"
+          min="0.5"
+          max="2"
+          step="0.01"
+          value={params.wb.r}
+          on:change={(e) => setWb("r", Number(e.currentTarget.value))}
+        />
+        <span class="mono val">{params.wb.r.toFixed(2)}</span>
+      </label>
+      <label class="row sub">
+        <span>G</span>
+        <input
+          type="range"
+          min="0.5"
+          max="2"
+          step="0.01"
+          value={params.wb.g}
+          on:change={(e) => setWb("g", Number(e.currentTarget.value))}
+        />
+        <span class="mono val">{params.wb.g.toFixed(2)}</span>
+      </label>
+      <label class="row sub">
+        <span>B</span>
+        <input
+          type="range"
+          min="0.5"
+          max="2"
+          step="0.01"
+          value={params.wb.b}
+          on:change={(e) => setWb("b", Number(e.currentTarget.value))}
+        />
+        <span class="mono val">{params.wb.b.toFixed(2)}</span>
+      </label>
+    {/if}
+    {#if $tone?.source}
+      <div class="meta">
+        {t("suggest.accepted_from")}
+        {$tone.source.name} v{$tone.source.version}
+        ({$tone.source.accepted_utc})
+      </div>
+    {/if}
+  {:else}
+    <p class="hint">{t("tone.none")}</p>
+  {/if}
+</section>
+
+<style>
+  .panel {
+    padding: 0 var(--space-3) var(--space-3);
+    border-bottom: 1px solid var(--stroke-subtle);
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+  .head h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .card {
+    background: var(--bg-inset, rgba(127, 127, 127, 0.08));
+    border: 1px solid var(--stroke-subtle);
+    border-radius: 8px;
+    padding: var(--space-2);
+    margin: var(--space-2) 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .card-title {
+    font-weight: 600;
+  }
+  .summary {
+    font-size: 12px;
+  }
+  .notes {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 12px;
+    color: var(--fg-secondary);
+  }
+  .meta {
+    font-size: 11px;
+    color: var(--fg-tertiary);
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 76px 1fr 52px;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 13px;
+    margin: var(--space-1) 0;
+  }
+  .row.sub {
+    grid-template-columns: 76px 1fr 52px;
+    padding-left: var(--space-2);
+  }
+  .val {
+    text-align: right;
+    font-size: 11px;
+  }
+  .hint {
+    font-size: 12px;
+    color: var(--fg-tertiary);
+    margin: var(--space-1) 0 0;
+  }
+  button.primary {
+    background: var(--accent, #7aa2f7);
+    color: #10121a;
+    border: none;
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  button {
+    background: transparent;
+    border: 1px solid var(--stroke-subtle);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    color: inherit;
+  }
+</style>

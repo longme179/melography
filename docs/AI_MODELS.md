@@ -26,17 +26,24 @@ Contrast/black pt:  histogram percentile shaping (p0.1 → target black, p99 →
 
 All values land in the UI as *editable* suggested parameters with a before/after toggle. Zero downloads, zero size, zero license surface.
 
-## 3. Candidate model families & vetting status (as of 2026-10-24)
+**M3 implementation notes (2026-10-24):**
+
+* Suggestions land as the **Tone stage** (`crates/color/src/tone.rs`): WB = Bradford cone **gains** (round-trip exact via `analysis_gains_for_gray` ↔ `wb_gains_to_ap1`; a CCT parameterization needs a Planckian-locus table — documented follow-up; the McCamy CCT shown in the UI is display-only), EV, luma-masked highlights/shadows, percentile black/white shaping with **post-EV** knot sources (preview ≡ export).
+* The skin-tone guard damps (up to 70 % at ≥ 25 % coverage) instead of blocking — warm scenes keep their character; a warm flat field reads as skin and that is pinned by tests.
+* Benchmark (issue #14's bar): synthetic ground-truth corpus, metrics ev/wb/clip, `cargo test -p melography-ai --features onnx -- --nocapture`; CI job `ai-onnx` re-runs it. Baseline 0.205 vs naive-ONNX 1.019.
+
+## 3. Candidate model families & vetting status (M3 outcome, 2026-10-24 — evidence: docs/quality/M3_AI_REPORT.md §3)
 
 | Family | Example sources | Status |
 |---|---|---|
-| Image-adaptive 3D-LUT basis predictors | Image-Adaptive-3DLUT (Apache-2.0 code; weights unverified) | Study approved; shipping only after weights vetting |
+| Image-adaptive 3D-LUT basis predictors | Image-Adaptive-3DLUT (Apache-2.0 code; weights unverified) | **Blocked** at the gate — weights license unverified; study-only |
 | Low-light exposure/illumination predictors | Zero-DCE family (**repo has NO license**) | Code/weights excluded (ADR-0003); paper-equation reimplementation possible after paper-terms check |
-| Self-corrective illumination (SCI) | canonical repo not yet located | Deferred — find + vet at M3 |
-| Tiny subject/sky segmentation | MobileSAM (Apache-2.0 code), EdgeSAM (NOASSERTION), U²-Net (Apache-2.0 code) | Weights all unverified; gated |
+| Self-corrective illumination (SCI) | canonical repo not yet located | Deferred — find + vet |
+| Tiny subject/sky segmentation | MobileSAM (Apache-2.0 code), EdgeSAM (NOASSERTION), U²-Net (Apache-2.0 code) | Weights all unverified; gated; v1 gate = parameter predictors only |
 | Tiny depth estimation | Depth-Anything-V2 small | Deferred (optional, later) |
+| **Naive gray-world predictor (project-generated)** | `scripts/gen_dummy_predictor.py` (CC0, 921 B) | **Passes the gate as a fixture; LOSES the benchmark 1.02 vs baseline 0.20** — the plumbing proof, never a shipping candidate |
 
-**No candidate is pre-committed.** Selection = vetting gate (§4) + benchmark win over §2 baseline + budget fit (§5).
+**No candidate is pre-committed.** Selection = vetting gate (§4) + benchmark win over §2 baseline + budget fit (§5). **M3 outcome: no model passed; v1 ships baseline-only (ADR-0004 §7 — acceptable, not a failure).**
 
 ## 4. Per-model manifest (blocking gate before any download/bundle)
 
@@ -68,6 +75,8 @@ Rejection rules: weights license missing/ambiguous or non-redistributable when d
 ## 6. Model manager (UX contract, UX_SPEC §7)
 
 States: `not-installed` (offer download, size shown) → `downloading` (progress, cancel) → `verifying` (SHA-256) → `installing` (atomic, temp+rename) → `ready` (version + delete button) → `corrupt/missing` (explicit error + re-download). All strings localized EN/VI; no dark patterns; deletion removes all files immediately.
+
+**M3 note:** all states are implemented and tested (`crates/ai/src/manager.rs`); v1's install path is **offline from local files** (the owner-side evaluation path — `melography ai install` / the app's ModelManager). The network downloader ships with the first gate-passing model: no model passed, so an HTTPS client would be unreachable attack surface (§8 discipline). Downloads, when they arrive, go only through the §8 allowlist.
 
 ## 7. Suggestion UX contract
 

@@ -42,14 +42,11 @@ fn warm_gradient_image(w: u32, h: u32) -> melography_core::ImageF32 {
 
 #[test]
 fn session_library_preview_flow() {
-    let dir = std::env::temp_dir().join(format!(
-        "melography-app-it-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    // Unique, panic-safe temp dir (drop = cleanup; replaces the hand-rolled
+    // nanos-clock naming — see the lut crate note on the macOS µs-granularity
+    // collision flake, PR #22 run 40086829632).
+    let _td = tempfile::tempdir().unwrap();
+    let dir = _td.path().to_path_buf();
 
     // "Open" a session: decode-free construction of the same state the
     // command layer builds (AP1 base + fingerprint).
@@ -89,17 +86,17 @@ fn session_library_preview_flow() {
 
     // Preview render + cache behavior.
     let base_key = stack_key(&ap1, &stack);
-    let f1 = compose_preview(&ap1, &mut st.preview_cache, &stack, None, 64).unwrap();
+    let f1 = compose_preview(&ap1, &mut st.preview_cache, &stack, None, None, 64).unwrap();
     assert_eq!((f1.width, f1.height), (64, 43));
     assert!(f1.rgba.len() == 64 * 43 * 4);
-    let f2 = compose_preview(&ap1, &mut st.preview_cache, &stack, None, 64).unwrap();
+    let f2 = compose_preview(&ap1, &mut st.preview_cache, &stack, None, None, 64).unwrap();
     assert_eq!(f1.rgba, f2.rgba);
     assert_eq!(st.preview_cache.as_ref().unwrap().key, base_key);
 
     // Parameter change invalidates.
     st.lut_stack[0].intensity = 0.0;
     let stack2 = st.resolve_stack().unwrap();
-    let f3 = compose_preview(&ap1, &mut st.preview_cache, &stack2, None, 64).unwrap();
+    let f3 = compose_preview(&ap1, &mut st.preview_cache, &stack2, None, None, 64).unwrap();
     assert_ne!(f1.rgba, f3.rgba);
 
     // Missing LUT → explicit error state (never a skip).
@@ -120,5 +117,4 @@ fn session_library_preview_flow() {
     );
 
     let _ = Arc::new(0); // keep Arc import meaningful for future shared luts
-    std::fs::remove_dir_all(&dir).ok();
 }

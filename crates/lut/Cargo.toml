@@ -15,3 +15,11 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+
+[dev-dependencies]
+# Guaranteed-unique, panic-safe temp dirs (auto-cleanup on drop). The
+# hand-rolled nanos-clock naming it replaces collided on macOS: the clock
+# has microsecond granularity, two parallel tests drew the same name,
+# shared one dir, and one test's remove_dir_all raced the other's rename
+# into ENOENT (PR #22 macOS run 40086829632).
+tempfile = "3"

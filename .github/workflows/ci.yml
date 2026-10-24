@@ -157,6 +157,26 @@ jobs:
       - name: Licenses + advisories + bans + sources
         run: cargo deny check
 
+  # ── M3: ONNX parameter-predictor evaluation (feature `onnx`; issue #14).
+  #    The vetting bar: baseline vs dummy benchmark + latency budget —
+  #    every candidate model must beat the baseline HERE before shipping.
+  #    ort binaries download at build time (same pin as the S3 spike).
+  ai-onnx:
+    name: AI onnx eval (activates at M3)
+    needs: rust-gate
+    if: needs.rust-gate.outputs.has_rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Activate pinned toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain
+      - name: Clippy (onnx features)
+        run: cargo clippy -p melography-ai --all-targets --features onnx -- -D warnings
+      - name: Tests + baseline-vs-dummy benchmark (the bar)
+        run: cargo test -p melography-ai --features onnx -- --nocapture
+      - name: Latency budget (release, ADR-0004 §5)
+        run: cargo test --release -p melography-ai --features onnx --test onnx_eval -- --ignored --nocapture
+
   # ── M1: editor shell (apps/melography-app — excluded workspace member;
   #    needs the webkit system stack at build time like the S4 spike, plus
   #    node for the Svelte UI build). Frontend is built AND type-checked;

@@ -29,6 +29,7 @@ melography-io = { path = "../../crates/io" }
 melography-lut = { path = "../../crates/lut" }
 melography-presets = { path = "../../crates/presets" }
 melography-film = { path = "../../crates/film" }
+melography-ai = { path = "../../crates/ai" }
 # The CLI lib is the shared *headless pipeline* (decode→S1→LUT→S5→encode
 # composition, ApplyOptions); both front ends consume it — ARCHITECTURE §2
 # lists app+cli as siblings over the same core crates.
@@ -52,3 +53,7 @@ default = ["gui"]
 # The real window app (wry webview). CI's app-build job and bundled builds
 # use default features; headless check (no webkit headers) disables it.
 gui = ["tauri/wry", "dep:tauri-plugin-dialog"]
+
+[dev-dependencies]
+# Unique panic-safe temp dirs (see the lut crate note).
+tempfile = "3"
