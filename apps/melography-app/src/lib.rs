@@ -11,8 +11,10 @@
 //! composition, pure + unit-tested) · `commands` (IPC surface) ·
 //! `error` (ARCHITECTURE §8 taxonomy → stable UI codes).
 
+pub mod batch;
 pub mod commands;
 pub mod error;
+pub mod export;
 pub mod recents;
 pub mod render;
 pub mod settings;
@@ -22,7 +24,7 @@ pub mod user_presets;
 #[cfg(feature = "gui")]
 use std::path::PathBuf;
 #[cfg(feature = "gui")]
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -62,8 +64,25 @@ pub fn run() {
         state.stocks = melography_presets::StockRegistry::open(&state.stocks_dir)
             .map(|r| r.profiles)
             .unwrap_or_default(); // browser shows the empty state honestly
+                                  // S6 batch queue (session 08): worker env snapshots the immutable
+                                  // roots; the queue outlives any single editing session.
+        let queue = Arc::new(batch::BatchQueue::new());
+        let worker_env = batch::WorkerEnv {
+            library_root: state.library_root(),
+            profiles_dir: state.stocks_dir.clone(),
+        };
         builder
             .manage(Mutex::new(state))
+            .manage(queue.clone())
+            .setup({
+                let queue = queue.clone();
+                let worker_env = worker_env.clone();
+                move |app| {
+                    let handle = app.handle().clone();
+                    batch::spawn_worker(queue, worker_env, handle);
+                    Ok(())
+                }
+            })
             .invoke_handler(tauri::generate_handler![
                 commands::open_image,
                 commands::close_image,
@@ -100,6 +119,18 @@ pub fn run() {
                 commands::apply_preset,
                 commands::wb_from_cct_tint,
                 commands::stock_thumbs,
+                commands::wb_pick,
+                // S6 batch export queue (session 08, #23 part 2).
+                batch::batch_add,
+                batch::batch_list,
+                batch::batch_thumb,
+                batch::batch_pause,
+                batch::batch_resume,
+                batch::batch_cancel,
+                batch::batch_cancel_all,
+                batch::batch_retry,
+                batch::batch_remove,
+                batch::batch_clear,
             ])
             .run(tauri::generate_context!())
             .expect("MELOGRAPHY window started");
