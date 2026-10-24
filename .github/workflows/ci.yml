@@ -175,7 +175,7 @@ jobs:
       - name: Install cargo-deny 0.20.2 (pinned, --locked)
         run: cargo install --locked --version 0.20.2 cargo-deny
       - name: App supply chain (cargo-deny on the app's own lockfile)
-        run: cargo deny --config deny.toml check --manifest-path apps/melography-app/Cargo.toml
+        run: cd apps/melography-app && cargo deny --config ../../deny.toml check
 
   # ── Spike S4: updater dummy-channel roundtrip (standalone crate, no gate) ──
   # tauri on Linux needs the webkit system stack at BUILD time even with the
