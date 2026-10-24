@@ -1,89 +1,145 @@
 //! # melography-lut
 //!
-//! LUT parsing, validation, tetrahedral interpolation and the content-
-//! addressed library. **M0 ships the type skeleton only** — the `.cube`
-//! parser + tetrahedral CPU engine + independent oracle arrive at M1
-//! (issue #7, research `docs/research/luts.md`).
+//! LUT engine (M1, issues #7 + #9): strict token-stream `.cube`
+//! parsing/validation, tetrahedral CPU interpolation (the oracle-quality
+//! reference), color-encoding contracts with wrap/unwrap around every LUT,
+//! intensity/mix + insertion points, and the content-addressed library with
+//! provenance + load-time integrity checks.
 //!
-//! The frozen contract surface (COLOR_PIPELINE §1 hard rule): every LUT
-//! stage *wraps its declared encoding* at its insertion point —
-//! `LutEncoding` exists from day one so no later design can "forget" it.
+//! Design contracts frozen here (COLOR_PIPELINE §1 hard rule, luts.md §2/§3):
+//! * every LUT application **wraps its declared encoding** — the pipeline
+//!   converts working AP1 into the LUT's declared input space, evaluates the
+//!   LUT, converts the declared output back to AP1;
+//! * inputs clamp to the declared domain *before* interpolation and the
+//!   clamp is **reported** (amber "domain clipping" badge), never silent;
+//! * unknown/malformed input is a structured error with a line number —
+//!   never a best-effort guess.
+//!
+//! The WGSL mirror of the tetrahedral sampler lives in `melography-gpu`
+//! (feature `wgpu`); both are validated against the *independent* Python
+//! oracle in `tools/lut_oracle.py` (written from the math in luts.md, not
+//! from this code) — see `tests/oracle_parity.rs`.
+
+pub mod cube;
+pub mod encoding;
+pub mod library;
+pub mod stage;
+pub mod tetra;
+
+pub use cube::{
+    parse_cube, parse_cube_file, CubeError, CubeErrorKind, CubeKind, CubeLut, CubeWarning,
+    ParseOptions,
+};
+pub use encoding::{roundtrip_error, unwrap_from, wrap_to, LutEncoding};
+pub use library::{ImportProvenance, LibraryError, LibraryIndex, LutLibrary, LutRecord};
+pub use stage::{apply_chain, ApplyReport, InsertionPoint, LutApply};
+pub use tetra::{sample, sample1d, sample3d, ClampFlags};
 
 use melography_core::{ColorEncoding, DeterminismClass, Stage, StageId, StageSpec};
 use serde::{Deserialize, Serialize};
 
-/// Pixel encoding a LUT expects at its input / produces at its output.
-/// Mismatched insertion = explicit error, never silent reinterpretation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LutEncoding {
-    /// LUT domain/range are sRGB code values (0..1 encoded convention).
-    SrgbEncoded,
-    /// LUT operates on linear display-referred values.
-    LinearDisplayReferred,
-    /// LUT operates in the AP1 working space (linear).
-    Ap1Linear,
-}
-
-/// Declared identity of a LUT file (full validation at M1).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LutSpec {
-    /// Content-addressed id (sha256 of the parsed data; library key).
-    pub content_hash: String,
-    pub size: u32,
-    pub input_encoding: LutEncoding,
-    pub output_encoding: LutEncoding,
-    /// 3D LUT (size³×3) or 1D shaper chain; M0 models 3D only.
-    pub kind: LutKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LutKind {
-    Cube3d,
-}
-
+/// LUT error taxonomy (ARCHITECTURE §8 `LutError` class, made concrete).
 #[derive(Debug, thiserror::Error)]
-#[error("LUT error: {0}")]
 pub enum LutError {
     #[error("unsupported LUT format or version: {0}")]
     Unsupported(String),
-    #[error("malformed LUT: {0}")]
-    Malformed(String),
-    #[error(
-        "encoding contract violated: LUT expects {expected:?}, pipeline provides {provided:?}"
-    )]
-    EncodingMismatch {
-        expected: LutEncoding,
-        provided: LutEncoding,
+    #[error("malformed LUT: {detail}")]
+    Malformed { detail: String },
+    #[error("LUT file {path} is malformed: {source}")]
+    MalformedFile {
+        path: String,
+        #[source]
+        source: CubeError,
     },
+    #[error("encoding contract violated: LUT expects {expected}, pipeline provides {provided}")]
+    EncodingMismatch { expected: String, provided: String },
+    #[error("unknown encoding identifier: {0} (the fixed vocabulary lives in encoding.rs)")]
+    EncodingUnknown(String),
+    #[error(
+        "encoding {0} is declared in the vocabulary but not implemented in this build — \
+         refusing to guess (import UI should have disabled it)"
+    )]
+    EncodingNotImplemented(&'static str),
+    #[error("LUT {hash} is missing from the library (removed or never imported)")]
+    Missing { hash: String },
+    #[error("LUT {hash} failed its content-address integrity check")]
+    ChecksumMismatch { hash: String },
+    #[error("library I/O error: {detail}")]
+    LibraryIo { detail: String },
 }
 
-/// Stage-contract view of a LUT insertion (instantiated per loaded LUT at
-/// M1; the spec wiring is fixed now).
+impl From<CubeError> for LutError {
+    fn from(e: CubeError) -> Self {
+        Self::Malformed {
+            detail: e.to_string(),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stage-contract view (M0 shape, kept for pipeline wiring; the concrete
+// application math lives in `stage::LutApply`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Declared identity of a LUT (parse-derived + user-declared parts).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LutSpec {
+    /// Content-addressed id (SHA-256 of the file bytes; library key).
+    pub content_hash: String,
+    pub size: u32,
+    pub kind: CubeKind,
+    pub declared_input: LutEncoding,
+    pub declared_output: LutEncoding,
+}
+
+impl LutSpec {
+    /// Build from a parsed LUT + hash + declarations.
+    #[must_use]
+    pub fn new(
+        content_hash: impl Into<String>,
+        lut: &CubeLut,
+        declared_input: LutEncoding,
+        declared_output: LutEncoding,
+    ) -> Self {
+        Self {
+            content_hash: content_hash.into(),
+            size: lut.size,
+            kind: lut.kind,
+            declared_input,
+            declared_output,
+        }
+    }
+}
+
+/// Stage-contract view of a LUT insertion (the `Stage` trait wiring the
+/// scheduler sees; math in `stage::LutApply`).
 pub struct LutStage {
     pub spec: LutSpec,
 }
 
 impl Stage for LutStage {
     fn id(&self) -> StageId {
-        StageId::new(format!("lut.3d.{}", self.spec.content_hash))
+        StageId::new(format!(
+            "lut.{:?}.{}",
+            self.spec.kind, self.spec.content_hash
+        ))
     }
     fn spec(&self) -> StageSpec {
+        // The pipeline-visible contract is AP1→AP1: the declared encodings
+        // are *wrapped inside* the stage (luts.md §3), so the scheduler's
+        // encoding contract stays the working space. The declarations are
+        // serialized in the recipe (stage::LutApply) and shown in the UI.
         StageSpec {
-            input: match self.spec.input_encoding {
-                LutEncoding::SrgbEncoded => ColorEncoding::Srgb { linear: false },
-                LutEncoding::LinearDisplayReferred => ColorEncoding::Srgb { linear: true },
-                LutEncoding::Ap1Linear => ColorEncoding::Ap1Linear,
-            },
-            output: match self.spec.output_encoding {
-                LutEncoding::SrgbEncoded => ColorEncoding::Srgb { linear: false },
-                LutEncoding::LinearDisplayReferred => ColorEncoding::Srgb { linear: true },
-                LutEncoding::Ap1Linear => ColorEncoding::Ap1Linear,
-            },
+            input: ColorEncoding::Ap1Linear,
+            output: ColorEncoding::Ap1Linear,
         }
     }
     fn determinism(&self) -> DeterminismClass {
         DeterminismClass::Deterministic
+    }
+    fn halo(&self) -> melography_core::Margins {
+        // Point operation: no tile overlap required (tiled ≡ monolithic by
+        // construction; the test suite still proves it, luts.md §5).
+        melography_core::Margins::default()
     }
 }

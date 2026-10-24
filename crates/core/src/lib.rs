@@ -109,6 +109,15 @@ impl ImageF32 {
         &self.data[i..i + c]
     }
 
+    /// Mutable single-pixel accessor (geometry-safe counterpart of
+    /// [`ImageF32::pixel`]; introduced at M1 for tile assembly and app
+    /// preview composition).
+    pub fn pixel_mut(&mut self, x: u32, y: u32) -> &mut [f32] {
+        let c = self.channels.count();
+        let i = (y as usize * self.width as usize + x as usize) * c;
+        &mut self.data[i..i + c]
+    }
+
     /// Byte length of the f32 payload (little-endian on all supported hosts).
     #[must_use]
     pub fn byte_len(&self) -> usize {
