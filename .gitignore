@@ -71,9 +71,13 @@ __pycache__/
 *.7z
 
 # --- Exported model weights are downloaded at runtime, never committed ---
-# EXCEPTION: the S3 spike's 171-byte project-authored dummy model (provenance
-# in spikes/s3-ort/models/provenance.json; no third-party weights).
+# EXCEPTIONS (project-authored dummy weights, no third-party data — each
+# ships a sibling provenance.json):
+#   * spikes/s3-ort/models/*.onnx          (171-byte M0 spike dummy)
+#   * crates/ai/tests/fixtures/*.onnx      (921-byte issue-#14 eval dummy;
+#     without it the ai-onnx CI job fails: fixture NotFound — PR #22)
 *.onnx
 !spikes/s3-ort/models/*.onnx
+!crates/ai/tests/fixtures/*.onnx
 *.ort
 *.safetensors

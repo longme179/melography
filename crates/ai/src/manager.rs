@@ -431,28 +431,50 @@ fn atomic_install(root: &Path, m: &ModelManifest, bytes: &[u8]) -> Result<(), st
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     );
-    // Weights.
+    // Weights + manifest share the M2 LUT durable-write pattern.
     let w_tmp = dir.join(format!("model.onnx{tmp_suffix}"));
-    std::fs::write(&w_tmp, bytes)?;
-    sync_file(&w_tmp)?;
-    std::fs::rename(&w_tmp, dir.join("model.onnx"))?;
+    atomic_write_durable(&w_tmp, bytes, &dir.join("model.onnx"))?;
     // Manifest (commit marker) — canonical JSON, written last.
     let manifest_json = serde_json::to_string_pretty(m)
         .map_err(|e| std::io::Error::other(format!("manifest serialize: {e}")))?;
     let m_tmp = dir.join(format!("manifest.json{tmp_suffix}"));
-    std::fs::write(&m_tmp, manifest_json)?;
-    sync_file(&m_tmp)?;
-    std::fs::rename(&m_tmp, dir.join("manifest.json"))?;
+    atomic_write_durable(&m_tmp, manifest_json.as_bytes(), &dir.join("manifest.json"))?;
     sync_dir(&dir)?;
     Ok(())
 }
 
-fn sync_file(path: &Path) -> Result<(), std::io::Error> {
+/// Create→write→`sync_all`→drop→rename, the pattern the M2 LUT library
+/// (crates/lut/src/library.rs) proved green on windows-latest. The sync
+/// MUST run on the write-mode handle itself: `File::open` (read-only) +
+/// `sync_all` maps to `FlushFileBuffers`, which requires write access on
+/// Windows and fails with ERROR_ACCESS_DENIED — the PR #22 windows-latest
+/// failure. Dropping the handle before the rename avoids the Windows
+/// sharing-violation trap on still-open files.
+fn atomic_write_durable(tmp: &Path, bytes: &[u8], dest: &Path) -> Result<(), std::io::Error> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(tmp, dest)
+}
+
+/// Directory fsync — makes the *rename itself* durable on POSIX (the
+/// directory entry is separate metadata from the file data). On Windows
+/// `std::fs::File::open` cannot open a directory at all (`CreateFileW`
+/// needs `FILE_FLAG_BACKUP_SEMANTICS`, which std does not pass →
+/// ERROR_ACCESS_DENIED), and NTFS journals the metadata ordering itself,
+/// so this is an honest no-op there — the same durability model the M2
+/// LUT library ships (its atomic writes never fsync the directory and
+/// have been windows-latest-green since M2).
+#[cfg(not(windows))]
+fn sync_dir(path: &Path) -> Result<(), std::io::Error> {
     std::fs::File::open(path)?.sync_all()
 }
 
-fn sync_dir(path: &Path) -> Result<(), std::io::Error> {
-    std::fs::File::open(path)?.sync_all()
+#[cfg(windows)]
+fn sync_dir(_path: &Path) -> Result<(), std::io::Error> {
+    Ok(())
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────
