@@ -513,7 +513,7 @@ fn gate_fast_grain_psd_slope_all_bundled_stocks() {
         let declared = p.grain.psd_slope;
         let rel = (slope - declared) / declared;
         let line = format!(
-            "{:28s} slope {slope:+.4} vs declared {declared:+.3} (rel {rel:+.4})",
+            "{:28} slope {slope:+.4} vs declared {declared:+.3} (rel {rel:+.4})",
             p.id
         );
         if rel.abs() > 0.15 {
