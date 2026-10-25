@@ -499,6 +499,10 @@ fn gate_fast_grain_psd_slope_all_bundled_stocks() {
         .unwrap();
     let reg = melography_presets::StockRegistry::open(&root.join("profiles")).unwrap();
     assert!(!reg.profiles.is_empty(), "bundled profiles must load");
+    // Collect every stock first — one panic message with ALL the numbers
+    // (a partial panic hides the rest and wastes a CI round).
+    let mut report = Vec::new();
+    let mut failures = Vec::new();
     for p in &reg.profiles {
         let f = FastGrain::resolve(p, 1.0, Some(99));
         let src = uniform_density(NATIVE_W, NATIVE_H, 1.0);
@@ -508,12 +512,21 @@ fn gate_fast_grain_psd_slope_all_bundled_stocks() {
         let slope = psd_slope(&out, 1, mmpp);
         let declared = p.grain.psd_slope;
         let rel = (slope - declared) / declared;
-        assert!(
-            rel.abs() <= 0.15,
-            "{}: fast PSD slope {slope:.3} vs declared {declared:.3} (rel {rel:+.4})",
+        let line = format!(
+            "{:28s} slope {slope:+.4} vs declared {declared:+.3} (rel {rel:+.4})",
             p.id
         );
+        if rel.abs() > 0.15 {
+            failures.push(line.clone());
+        }
+        report.push(line);
     }
+    assert!(
+        failures.is_empty(),
+        "fast PSD slope gate (tol 15% per stock):\n{}\n-- failures:\n{}",
+        report.join("\n"),
+        failures.join("\n")
+    );
 }
 
 #[test]
