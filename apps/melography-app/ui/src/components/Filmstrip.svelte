@@ -29,7 +29,10 @@
 
   async function refreshOriginal() {
     try {
-      const f = await originalFrame(96);
+      // A1: the preview transport is validated at the command boundary
+      // (256..=2560) — the strip's "original" glyph asks for the minimum
+      // bound; the browser scales it down for display (crisper on HiDPI).
+      const f = await originalFrame(256);
       originalUrl = rgbaToDataUrl(f.width, f.height, f.rgba);
     } catch {
       originalUrl = null; // no session — the strip is empty, honestly

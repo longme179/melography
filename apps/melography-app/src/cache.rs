@@ -4,8 +4,10 @@
 //! Two caches with byte budgets derived from `Settings.cache_budget_mb`
 //! (previously advisory — now enforced):
 //!
-//! * [`PreviewCacheState`] — the single full-resolution render slot the
-//!   viewport composes from. Budget = the full setting. A rendered image
+//! * [`PreviewCacheState`] — the single bounded-preview render slot the
+//!   viewport composes from (A1: the slot holds the *preview-scale*
+//!   artifact keyed on (params, max_dim), never a full-resolution
+//!   image). Budget = the full setting. A rendered image
 //!   larger than the budget is NOT cached (honest degradation: the next
 //!   interaction re-renders; surfaced via `cache_stats` as
 //!   `enabled: false`) rather than silently blowing the memory ceiling.

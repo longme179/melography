@@ -3,7 +3,7 @@
 //! wrappers): session open → library import → hash-verified resolve →
 //! cached preview composition → cache invalidation on parameter change.
 
-use melography_app_lib::render::{compose_original, compose_preview, stack_key};
+use melography_app_lib::render::{compose_original, compose_preview, preview_key};
 use melography_app_lib::state::EditorState;
 use melography_lut::stage::{InsertionPoint, LutApply};
 use melography_lut::{LutEncoding, LutLibrary};
@@ -84,8 +84,9 @@ fn session_library_preview_flow() {
     assert_eq!(stack[0].lut.size, 17);
     assert_eq!(stack[0].apply.intensity, 0.65);
 
-    // Preview render + cache behavior.
-    let base_key = stack_key(&ap1, &stack);
+    // Preview render + cache behavior (A1: the slot key is preview_key —
+    // stack + tone + film + max_dim folded in).
+    let base_key = preview_key(&ap1, &stack, None, None, 64);
     let f1 = compose_preview(&ap1, &mut st.preview_cache, &stack, None, None, 64).unwrap();
     assert_eq!((f1.width, f1.height), (64, 43));
     assert!(f1.rgba.len() == 64 * 43 * 4);

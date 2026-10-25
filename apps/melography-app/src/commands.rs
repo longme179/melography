@@ -5,6 +5,8 @@
 //! Command surface (M1, UX_SPEC §4/§6 slices):
 //! * `open_image` / `close_image` — session lifecycle (original untouched)
 //! * `render_preview` / `original_frame` — binary preview transport
+//!   (A1: `max_dim` resolved/validated at this boundary — 0 → Settings
+//!   fallback, 256..=2560, else the typed `render.max_dim_out_of_range`)
 //! * `import_lut` / `list_luts` / `remove_lut` — library (D1 flow)
 //! * `set_lut_stack` / `get_state` — parameter surface (panel ↔ recipe)
 //! * `save_recipe` / `export_image` — persistence + export (reuses the
@@ -188,6 +190,12 @@ pub fn close_image(state: St) {
 #[tauri::command]
 pub fn render_preview(state: St, max_dim: u32) -> Result<tauri::ipc::Response, AppError> {
     let mut st = state.lock().unwrap();
+    // A1 · The ONE validation point for the preview transport: 0 (the
+    // legacy "unbounded" sentinel) falls back to Settings.preview_max_dim,
+    // 256..=2560 passes, anything else is the typed
+    // `render.max_dim_out_of_range`. The pre-A1 caller sent maxDim 0 →
+    // full-res film-chain renders + ~100 MB wire frames, discarded.
+    let max_dim = render::resolve_max_dim(st.settings.preview_max_dim, max_dim)?;
     let base = st
         .session
         .as_ref()
@@ -211,6 +219,10 @@ pub fn render_preview(state: St, max_dim: u32) -> Result<tauri::ipc::Response, A
 #[tauri::command]
 pub fn original_frame(state: St, max_dim: u32) -> Result<tauri::ipc::Response, AppError> {
     let st = state.lock().unwrap();
+    // Compare parity (A1): the "original" is bounded by the SAME rule
+    // as the edited preview — same sentinel, same range, same error —
+    // so hold-B/compare can never fetch a differently-scaled frame.
+    let max_dim = render::resolve_max_dim(st.settings.preview_max_dim, max_dim)?;
     let session = st
         .session
         .as_ref()
@@ -897,7 +909,11 @@ pub fn set_settings(
     settings: crate::settings::Settings,
 ) -> Result<crate::settings::Settings, AppError> {
     let mut st = state.lock().unwrap();
-    st.settings = settings;
+    // A1 defense in depth: clamp BEFORE assigning/saving. Loading clamps
+    // too, but the in-session window (hand-edited IPC payload, UI
+    // regression) must not smuggle an out-of-range preview_max_dim into
+    // the render fallback — `resolve_max_dim` re-clamps regardless.
+    st.settings = settings.clamped();
     st.settings
         .save(&st.library_root().join("settings.json"))
         .map_err(|e| AppError::new("settings.save", e.to_string()))?;

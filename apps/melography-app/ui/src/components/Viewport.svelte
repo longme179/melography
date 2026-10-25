@@ -24,6 +24,10 @@
 
   export let maxDim = 1600;
   export let imageOpen = false;
+  /** Identity of the open image (A1: drives original-frame reuse —
+   *  the compare "original" only changes when the image or the bound
+   *  changes, never per slider commit). */
+  export let imageKey = "";
   /** Fired after a WB pick so the shell refreshes state (dirty badge). */
   export let onWbPicked: () => void = () => {};
 
@@ -55,32 +59,73 @@
     refresh();
   }
 
-  export async function refresh() {
-    if (!imageOpen) return;
+  // ── A1 render coalescing (last-wins) ────────────────────────────────
+  // One render pass may be in flight at a time; requests arriving
+  // mid-render collapse into a single queued re-run that reads the
+  // LATEST params + bound when it starts. Rapid slider commits and
+  // resize storms never queue renders, and the final on-screen state
+  // always reflects the last request (the old busy-gate behavior
+  // swallowed commits instead — that was the bug, not the fix).
+  let rendering: Promise<void> | null = null;
+  let rerunRequested = false;
+  /** Original-frame reuse (A1): `${imageKey}:${dim}` of the cached
+   *  original — refreshed only when the image or the viewport bound
+   *  changes, not on every parameter commit. */
+  let originalKey = "";
+
+  export function refresh(): Promise<void> {
+    if (!imageOpen) return Promise.resolve();
+    if (rendering) {
+      rerunRequested = true; // last-wins: one queued re-run, latest state
+      return rendering;
+    }
+    rendering = renderPass();
+    return rendering;
+  }
+
+  async function renderPass(): Promise<void> {
     try {
-      edited = await renderPreview(maxDim);
-      renderMs = edited.renderMs;
-      announceRender(renderMs);
-      original = await originalFrame(maxDim);
-      blit();
-      // #25: cache hit-rate in the status bar — non-blocking, never
-      // delays the blit for a diagnostics read.
-      cacheStats()
-        .then((cs) => {
-          cacheLabel =
-            cs.preview.hits + cs.preview.misses === 0
-              ? "" // nothing measured yet — show nothing, not a fake 0%
-              : cs.preview.cached
-                ? t("viewport.cache", { n: Math.round(cs.preview.hit_rate_pct) })
-                : t("viewport.cacheOff");
-        })
-        .catch(() => (cacheLabel = ""));
+      do {
+        rerunRequested = false;
+        // Read fresh each pass: a resize or commit that lands mid-render
+        // re-runs with the new bound / params, never a stale one.
+        const dim = maxDim;
+        edited = await renderPreview(dim);
+        renderMs = edited.renderMs;
+        announceRender(renderMs);
+        const wantOriginal = `${imageKey}:${dim}`;
+        if (!original || wantOriginal !== originalKey) {
+          original = await originalFrame(dim);
+          originalKey = wantOriginal;
+        }
+        blit();
+        // #25: cache hit-rate in the status bar — non-blocking, never
+        // delays the blit for a diagnostics read.
+        cacheStats()
+          .then((cs) => {
+            cacheLabel =
+              cs.preview.hits + cs.preview.misses === 0
+                ? "" // nothing measured yet — show nothing, not a fake 0%
+                : cs.preview.cached
+                  ? t("viewport.cache", { n: Math.round(cs.preview.hit_rate_pct) })
+                  : t("viewport.cacheOff");
+          })
+          .catch(() => (cacheLabel = ""));
+      } while (rerunRequested);
     } catch (e) {
       // Session 11: a failed render is a diagnosable error, not a silent
       // blank canvas — surface it in the same banner every other command
       // failure uses (UX_SPEC §9) in addition to the console trace.
       console.error("preview render failed", e);
       lastError.set(e as never);
+    } finally {
+      rendering = null;
+      // A request that arrived during a FAILING pass was not drained by
+      // the loop — start it now so the last state still renders once.
+      if (rerunRequested) {
+        rerunRequested = false;
+        refresh();
+      }
     }
   }
 

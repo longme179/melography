@@ -1,6 +1,6 @@
 # MELOGRAPHY — Error-state inventory (UX_SPEC §9 × ARCHITECTURE §8)
 
-**Version:** M4 session 10 (issue #25) · **Scope:** every user-facing error
+**Version:** M4 session 10 (issue #25) · updated M5-A session 14 (A1 preview transport) · **Scope:** every user-facing error
 code in the app · **Enforced by:** `scripts/error_inventory.py` (CI) — the
 matrix below, the Rust `AppError::new("…")` literals and the EN/VI i18n
 catalogs are cross-checked on every push; a code without a row, a row
@@ -22,7 +22,7 @@ No raw error strings ever reach the UI: the Svelte layer renders
 with the raw engine message logged to the console for diagnostics only —
 CI-enforced by `ui_i18n_audit.mjs` (embedded-string scan).
 
-## The matrix (28 codes)
+## The matrix (39 codes)
 
 Taxonomy column maps to ARCHITECTURE §8 classes; codes marked
 *app-layer* extend the §8 engine taxonomy (session/preset/settings/batch
@@ -64,6 +64,7 @@ have no §8 class — listed honestly instead of force-fitted).
 | `preset.save` | app-layer (presets) | Saving the preset failed. | Lưu preset thất bại. | preset manager | retry; check disk |
 | `recipe.io` | sidecar I/O (ARCH §7) | Reading or writing the recipe sidecar failed. | Đọc/ghi sidecar công thức thất bại. | toast | retry; check disk |
 | `recipe.version` | sidecar I/O (ARCH §7) | The recipe sidecar uses an unsupported version. | Sidecar công thức dùng phiên bản không được hỗ trợ. | toast | let the app migrate it (v0 → v1) |
+| `render.max_dim_out_of_range` | PipelineError (validation) | The requested preview size is out of range (256–2560 px). | Kích thước bản xem trước yêu cầu nằm ngoài phạm vi cho phép (256–2560 px). | toast | only reachable via a malformed IPC call — the UI clamps by construction; report a bug if seen |
 | `session.history` | app-layer (session) | Nothing to undo or redo. | Không còn gì để hoàn tác hoặc làm lại. | toast (harmless) | none (informational) |
 | `session.none` | app-layer (session) | No image is open. | Chưa mở ảnh nào. | toast | open an image first |
 | `settings.save` | app-layer (settings) | Saving the settings failed. | Lưu cài đặt thất bại. | toast | retry; check disk |
