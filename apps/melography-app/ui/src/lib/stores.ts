@@ -17,6 +17,8 @@ export const state = writable<AppState>({
   filmStock: null,
   missingStock: null,
   sourcePath: null,
+  stocksDir: "",
+  stocksCount: 0,
 });
 
 /** Latest error surfaced to the banner (UX_SPEC §9: message + cause + next action). */

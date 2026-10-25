@@ -6,7 +6,7 @@
    *  through the i18n catalogs, numbers are locale-aware, and all knobs
    *  use the shared Slider (double-click reset, arrows, typed values). */
   import { invoke } from "@tauri-apps/api/core";
-  import { film, stocks, toast, type Stock, type FilmAdjustments } from "../lib/stores";
+  import { film, stocks, toast, state, type Stock, type FilmAdjustments } from "../lib/stores";
   import { t, tEnum } from "../lib/i18n";
   import Slider from "./Slider.svelte";
 
@@ -63,6 +63,16 @@
       {/each}
     </select>
   </label>
+
+  {#if $stocks.length === 0}
+    <!-- Session 11 (UX_SPEC §9 honest failure): a missing registry is a
+         diagnosable configuration error — name the path, never silently
+         show an empty feature. -->
+    <div class="no-stocks" role="status">
+      <p>{t("film.noStocks")}</p>
+      <p class="mono path">{$state.stocksDir}</p>
+    </div>
+  {/if}
 
   {#if selected}
     <div class="provenance" class:warn={selected.provenance === "ArtistAuthored"}>
@@ -210,5 +220,20 @@
   .hint {
     opacity: 0.7;
     line-height: 1.4;
+  }
+  .no-stocks {
+    background: color-mix(in srgb, var(--warn) 10%, var(--bg-panel));
+    border: 1px solid var(--warn);
+    border-radius: var(--radius);
+    color: var(--fg-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+    padding: var(--space-2) var(--space-3);
+  }
+  .no-stocks .path {
+    color: var(--fg-tertiary);
+    font-size: 11px;
+    margin: var(--space-1) 0 0;
+    overflow-wrap: anywhere;
   }
 </style>

@@ -52,6 +52,7 @@ pub(crate) fn load_ap1(path: &Path) -> Result<melography_core::ImageF32, AppErro
 // ─── session ────────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImageInfo {
     pub name: String,
     pub width: u32,
@@ -221,6 +222,7 @@ pub fn original_frame(state: St, max_dim: u32) -> Result<tauri::ipc::Response, A
 // ─── library (D1 import flow) ───────────────────────────────────────────────
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LutRecordJson {
     pub content_hash: String,
     pub original_filename: String,
@@ -260,6 +262,7 @@ impl From<&LutRecord> for LutRecordJson {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImportLutArgs {
     pub path: String,
     /// Fixed vocabulary (luts.md §3); UI only offers implemented entries.
@@ -305,6 +308,7 @@ pub fn remove_lut(state: St, hash: String) -> Result<(), AppError> {
 // ─── parameter surface (LUT panel ↔ recipe) ────────────────────────────────
 
 #[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct LutStackEntry {
     pub lut_hash: String,
     pub insertion: String,
@@ -315,6 +319,7 @@ pub struct LutStackEntry {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StateJson {
     pub image_open: bool,
     pub image_name: Option<String>,
@@ -337,9 +342,16 @@ pub struct StateJson {
     /// Absolute path of the open original (S6 "add to batch" — the
     /// queue renders from the source file, not the session).
     pub source_path: Option<String>,
+    /// Where the stock registry was resolved from + how many stocks it
+    /// yielded (session 11): the Film Lab empty state NAMES the path it
+    /// looked in — a missing registry is a diagnosable configuration
+    /// error, never a silent "no stocks" feature (UX_SPEC §9).
+    pub stocks_dir: String,
+    pub stocks_count: usize,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LutStackJson {
     pub lut_hash: String,
     pub insertion: String,
@@ -415,6 +427,8 @@ fn state_json(st: &crate::state::EditorState) -> StateJson {
             .session
             .as_ref()
             .map(|s| s.source_path.display().to_string()),
+        stocks_dir: st.stocks_dir.to_string_lossy().into_owned(),
+        stocks_count: st.stocks.len(),
     }
 }
 
@@ -898,9 +912,9 @@ pub fn set_settings(
 
 /// Cache stats for the S2 status bar + Settings diagnostics (#25):
 /// hit-rates, budgets, residency — every number measured, none faked.
-#[tauri::command]
-pub fn cache_stats(state: St) -> serde_json::Value {
-    let st = state.lock().unwrap();
+/// Pure body (session 11): the IPC contract test samples the exact
+/// JSON the webview parses, without a Tauri runtime.
+pub fn cache_stats_json(st: &EditorState) -> serde_json::Value {
     let p = &st.preview_cache;
     let l = &st.luts_loaded;
     let rate = |hits: u64, misses: u64| -> f64 {
@@ -930,6 +944,12 @@ pub fn cache_stats(state: St) -> serde_json::Value {
             "entries": l.len(),
         },
     })
+}
+
+#[tauri::command]
+pub fn cache_stats(state: St) -> serde_json::Value {
+    let st = state.lock().unwrap();
+    cache_stats_json(&st)
 }
 
 // ─── Recents (M4 #23, UX_SPEC §3 S1 Home) ───────────────────────────────────
