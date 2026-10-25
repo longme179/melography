@@ -11,6 +11,7 @@
     type PreviewFrame,
   } from "../lib/ipc";
   import { t, fmtNum } from "../lib/i18n";
+  import { blitFrame } from "../lib/blit";
   import {
     compareOn,
     compareSplit,
@@ -31,9 +32,16 @@
   /** Fired after a WB pick so the shell refreshes state (dirty badge). */
   export let onWbPicked: () => void = () => {};
 
-  let canvas: HTMLCanvasElement;
-  let originalCanvas: HTMLCanvasElement;
-  let container: HTMLElement;
+  // Session 15: every bind:this target is OPTIONAL — Svelte unbinds an
+  // element when its block unmounts (image closed → canvases gone;
+  // compare off → the clip is hidden, see the template). All pixel
+  // writes go through lib/blit.ts, which treats an unbound canvas as a
+  // typed no-op — the crash this replaces read `originalCanvas.width`
+  // on every render with compare off ("undefined is not an object
+  // (evaluating 'p.width=v.width')" in the minified bundle).
+  let canvas: HTMLCanvasElement | undefined;
+  let originalCanvas: HTMLCanvasElement | undefined;
+  let container: HTMLElement | undefined;
 
   let edited: PreviewFrame | null = null;
   let original: PreviewFrame | null = null;
@@ -52,6 +60,13 @@
 
   $: if (imageOpen) {
     refresh();
+  } else {
+    // Session 15: image closed — drop the stale frames so a later
+    // layout()/blit() (window resize, hold-B keyup) can never act on
+    // pixels whose canvas is gone, and the next open starts clean.
+    edited = null;
+    original = null;
+    originalKey = "";
   }
 
   export function setViewportSize(w: number, h: number) {
@@ -116,8 +131,12 @@
       // Session 11: a failed render is a diagnosable error, not a silent
       // blank canvas — surface it in the same banner every other command
       // failure uses (UX_SPEC §9) in addition to the console trace.
+      // Session 15: …but only while an image is actually open — a pass
+      // that fails because the image was CLOSED mid-render (no session
+      // on the Rust side anymore) must not pop the banner at the home
+      // screen.
       console.error("preview render failed", e);
-      lastError.set(e as never);
+      if (imageOpen) lastError.set(e as never);
     } finally {
       rendering = null;
       // A request that arrived during a FAILING pass was not drained by
@@ -141,32 +160,24 @@
     }, 400);
   }
 
-  function blit() {
-    if (!edited || !canvas) return;
-    const active = showOriginal && original ? original : edited;
-    canvas.width = active.width;
-    canvas.height = active.height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.putImageData(new ImageData(active.rgba, active.width, active.height), 0, 0);
+  // Session 15: the compare canvas mounts on the Svelte flush AFTER the
+  // pass that loaded `original` (bind:this lands after renderPass's own
+  // blit()) — draw it the moment it exists so toggling compare on never
+  // shows a blank left half waiting for the next parameter commit.
+  $: if (originalCanvas && original) blitFrame(originalCanvas, original);
 
-    if (original && edited) {
-      originalCanvas.width = original.width;
-      originalCanvas.height = original.height;
-      const octx = originalCanvas.getContext("2d");
-      if (octx) {
-        octx.putImageData(
-          new ImageData(original.rgba, original.width, original.height),
-          0,
-          0,
-        );
-      }
-    }
+  function blit() {
+    if (!edited) return;
+    // Single blit path (session 15): unbound canvases are no-ops inside
+    // lib/blit.ts — showOriginal keeps its hold-B swap, compare keeps
+    // its split original, neither can crash on an unmounted element.
+    blitFrame(canvas, showOriginal && original ? original : edited);
+    blitFrame(originalCanvas, original);
     layout();
   }
 
   function layout() {
-    if (!container || !edited) return;
+    if (!container || !edited || !canvas) return;
     const cw = container.clientWidth;
     const ch = container.clientHeight;
     const fit = Math.min(cw / edited.width, ch / edited.height);
@@ -237,7 +248,7 @@
       dragging = true;
       panX += 0; // anchor
     }
-    container.setPointerCapture(e.pointerId);
+    if (container) container.setPointerCapture(e.pointerId);
   }
 
   async function pickWb(nx: number, ny: number) {
@@ -255,9 +266,9 @@
 
   function onPointerMove(e: PointerEvent) {
     if (draggingDivider) {
-      const rect = (
-        canvas.parentElement as HTMLElement
-      ).getBoundingClientRect();
+      const holder = canvas?.parentElement;
+      if (!holder) return;
+      const rect = holder.getBoundingClientRect();
       splitX = Math.min(
         1,
         Math.max(0, (e.clientX - rect.left) / rect.width),
@@ -343,13 +354,26 @@
     {/if}
     <div class="stack" style="position:relative">
       <canvas bind:this={canvas}></canvas>
-      {#if $compareOn && original}
-        <div class="split-clip" style="position:absolute;inset:0;overflow:hidden">
+      {#if original}
+        <!-- Session 15: the compare canvas mounts whenever an original
+             frame EXISTS and is hidden via CSS while compare is off —
+             the element lifecycle now matches the data lifecycle, so
+             blit() always has a bound canvas (the old
+             `{#if $compareOn && original}` mount crashed every render
+             pass with compare off) and toggling compare on shows the
+             already-drawn original instantly instead of a blank half. -->
+        <div
+          class="split-clip"
+          class:off={!$compareOn}
+          style="position:absolute;inset:0;overflow:hidden"
+        >
           <div style="position:relative">
             <canvas bind:this={originalCanvas}></canvas>
             <div class="divider" style="position:absolute;top:0;bottom:0;width:2px;background:var(--accent-400);cursor:col-resize"></div>
           </div>
         </div>
+      {/if}
+      {#if $compareOn && original}
         <span class="label left">{t("viewport.original")}</span>
         <span class="label right">{t("viewport.edited")}</span>
       {/if}
@@ -420,6 +444,12 @@
     display: block;
     image-rendering: auto;
     box-shadow: 0 0 0 1px var(--stroke-subtle);
+  }
+  /* Session 15: compare-off hides the clip instead of unmounting it
+     (see the template note) — display:none keeps it out of the a11y
+     tree and hit testing exactly like the old {#if} removal did. */
+  .split-clip.off {
+    display: none;
   }
   .status {
     position: absolute;
