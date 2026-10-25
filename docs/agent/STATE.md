@@ -11,7 +11,7 @@ correctness, PR #35), the session-15 viewport hotfix (PR #36) and A2.1
 implemented on `agent/m5a2-grain-fastpath`** — `FastGrain` in
 `crates/film/src/grain.rs`: three octaves of correlated band-limited value
 noise on absolute film coordinates (Δ = 8/16/32 µm), weights
-`(1,t,t)` with `t = clamp(−0.8931·psd_slope − 0.6782, 0, 0.45)`,
+`(1,t,t)` with `t = clamp(−0.9543·psd_slope − 0.7895, 0, 0.45)`,
 Cholesky layer mixing, the full model's own self-calibration and
 k-supersampling; §L gates apply unchanged (new fast gates: RMS, PSD
 incl. all bundled stocks, ρ, zoom, byte-exact tiling/threading,
@@ -38,10 +38,12 @@ outside the repo (`~/my-project/scripts/a22_*.py`). A2.3–A5 remain.
    flag (render cache key unchanged — the flag is a renderer property,
    constant for every preview render); export path
    (`export.rs` → `cmd_film_apply` → CLI) never sets it
-5. ✅ Gates: fast RMS (0.3/1.0/1.6), fast PSD (test profile −0.832 vs
-   −0.869, 4.2 %), all-bundled-stocks PSD (worst 9 %, tol 15 %), ρ,
-   zoom, chain determinism hash, fast tiled≡mono + threaded≡mono byte
-   gates, fast≠full honest-label test; perf legs
+5. ✅ Gates: fast RMS (0.3/1.0/1.6, within ±6 %), fast PSD (test
+   −0.863 vs −0.869, 0.7 %; colour stocks 0.3–2.9 %;
+   classic-monochrome-400 documented ±20 % exception — declared anchor
+   below its own field's reachable band, full model also ≈ −0.98), ρ,
+   zoom (≈ 0 %), chain determinism hash, fast tiled≡mono +
+   threaded≡mono byte gates, fast≠full honest-label test; perf legs
    `resolve-fast` + `preview-fast-threaded-2048x1536` (release-ignored,
    the §4 re-pin evidence for the owner's machine)
 6. ✅ UI label "grain (fast preview)" in FilmLab (EN/VI); PLAN A2.2

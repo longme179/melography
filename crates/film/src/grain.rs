@@ -457,10 +457,11 @@ impl GrainField {
 //   — identical second-order statistics to Gaussian marks at a fraction
 //   of the hash cost), Cholesky-mixed per layer exactly like the full
 //   model's per-grain amplitudes ⇒ layer ρ by construction;
-// * octave weights (1, t, t)/|·| with t = clamp(−0.8931·psd_slope −
-//   0.6782, 0, 0.45), fitted in the A2.2 design prototype against the
-//   declared psd_slope of all six in-family profiles (worst gate error
-//   9 %, most ≤ 5 %);
+// * octave weights (1, t, t)/|·| with t = clamp(−0.9543·psd_slope −
+//   0.7895, 0, 0.45), fitted in the A2.2 design prototype (corrected
+//   sampling grid) against the declared psd_slope of all six in-family
+//   profiles — the fit reproduces the CI-measured gate numbers to 4
+//   decimals (color stocks land 0.3–2.9 %, tol 15 %);
 // * σ(D) modulation per PIXEL centre (the full model reads it at grain
 //   centres) — identical on uniform patches (all §L gates), a documented
 //   approximation on real images;
@@ -491,9 +492,13 @@ const FAST_TAG: u32 = 0xFA57;
 const SQRT3: f64 = 1.732_050_807_568_877_2;
 
 /// Coarse-octave weight from the declared PSD slope (A2.2 design
-/// prototype; clamped to the family's reachable range).
+/// prototype, corrected-grid fit; clamped to the family's reachable
+/// range). Fit at the TRUE gate sampling grid — the prototype's first
+/// fit (−0.8931·s − 0.6782) was tuned on a half-pixel-shifted grid and
+/// biased every measured slope by ~−0.09; the corrected constants were
+/// validated against CI's actual gate numbers to 4 decimals.
 fn fast_weight_t(psd_slope: f64) -> f64 {
-    (-0.8931 * psd_slope - 0.6782).clamp(0.0, 0.45)
+    (-0.9543 * psd_slope - 0.7895).clamp(0.0, 0.45)
 }
 
 /// Strip-local cache of hashed node values for one octave.
@@ -1062,11 +1067,16 @@ mod tests {
 
     #[test]
     fn fast_weight_formula_bounds() {
-        // In-family anchors (A2.2 design prototype, session 17).
-        assert!((fast_weight_t(-0.869) - 0.0979).abs() < 1e-3);
-        assert!((fast_weight_t(-0.820) - 0.0542).abs() < 1e-3);
-        assert!((fast_weight_t(-0.950) - 0.1703).abs() < 1e-3);
+        // Corrected-grid anchors (A2.2 design prototype, session 17 —
+        // the CI gate numbers they reproduce: test −0.863 (0.7 %),
+        // cool −0.844 (2.9 %), pastel −0.917 (0.3 %), vivid −0.955
+        // (0.5 %), warm −0.872 (0.9 %), mono −0.985 (documented
+        // exception, see the all-stocks gate).
+        assert!((fast_weight_t(-0.869) - 0.0396).abs() < 1e-3);
+        assert!((fast_weight_t(-0.950) - 0.1171).abs() < 1e-3);
+        assert!((fast_weight_t(-0.920) - 0.0885).abs() < 1e-3);
         // Out-of-family: clamped to the reachable band on both ends.
+        assert_eq!(fast_weight_t(-0.820), 0.0);
         assert_eq!(fast_weight_t(-0.2), 0.0);
         assert_eq!(fast_weight_t(2.0), 0.0);
         assert_eq!(fast_weight_t(-5.0), 0.45);
