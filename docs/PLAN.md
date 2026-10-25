@@ -18,8 +18,9 @@ flowchart TD
   M2 --> M3[M3: AI assistance]
   M2 --> M4[M4: UX/polish/hardening]
   M3 --> M4
-  M4 --> M5[M5: controlled beta v0.1]
-  M5 -->|owner approval| R1[First stable release]
+  M4 --> M5A[M5-A: depth & speed (owner asks)]
+  M5A --> M5B[M5-B: beta v0.1]
+  M5B -->|owner approval| R1[First stable release]
 ```
 
 ## 2. Milestones (scope · tasks · exit criteria)
@@ -66,7 +67,120 @@ Tasks: full panel set per UX_SPEC · batch export queue · undo/redo + autosave 
 **Progress (session 10b — post-merge fix, PR #31):** the first real `tauri build` on owner hardware (Fedora 44) exposed that session 10's build scripts had never exercised the Tauri hook layer — CI builds the UI manually and debug builds with `devUrl` never embed `frontendDist`, so the misconfiguration was invisible to every gate. Root cause: `beforeBuildCommand` runs with cwd = the CLI's *auto-detected frontend dir* (`apps/melography-app/ui`, the nearest `package.json`), so `npm --prefix ui` resolved to `ui/ui` (ENOENT, exit 254), and `frontendDist: "../ui/dist"` resolved against the `tauri.conf.json` dir to the nonexistent `apps/ui/dist` (would have failed the CLI web-assets check right after the hook). Fixed both in `tauri.conf.json` (hooks `npm run build`/`npm run dev`; dist `ui/dist`), verified against tauri-cli 2.12.4 source (`app_paths.rs`/`helpers.rs`/`tauri-codegen context.rs`), a directory-resolution simulation, and a real `npm run build` from `ui/`; `docs/BUILDING.md` §"Invocation directory matters" documents the constraint.
 **Progress (session 09, #15 — i18n/a11y):** zero embedded strings (FilmLab/StockBrowser/Settings swept; `tEnum` localizes backend enums with raw fallback; 17 missing error-code entries added — 28/28 covered); locale-aware numbers (`fmtNum`, VI comma decimals); **pseudo-locale CI** (`vite build --mode pseudo`, proportional ≥40% accent-padding, tree-shake-verified) + `ui_i18n_audit.mjs` (parity/diacritics/placeholders/embedded-scan/error-coverage — 323/323 keys, 95% diacritics, 0 embedded strings); **`ui_contrast_audit.mjs` computes WCAG AA for all 54 token pairs × 3 themes — found and fixed 2 real AA failures** (light primary-button label 3.65→4.84; light fg-tertiary-on-elevated 4.28→4.96) + dark fg-tertiary headroom; SR announcements (debounced render status, toast aria-live); Esc closes every dialog; Svelte a11y linter clean repo-wide; 32px touch targets (one documented exemption); reduced-motion rule. Evidence: `docs/quality/M4_A11Y_I18N_REPORT.md`. Remaining in M4: #25 hardening.
 
-### M5 — Controlled beta v0.1 (effort M, uncertainty medium — owner-gated)
+### M5 — Controlled beta v0.1 (effort L, uncertainty medium — owner-gated)
+
+**Restructured (session 13, 2026-10-25).** The owner's verdict on the first
+functional GUI run — *"works; incomplete features; small bugs; preview slow
+but optimizable; Film Room not good yet"* — plus four explicit asks
+(bundled famous LUTs, especially Rec709; lightcraft as reference;
+Nvidia/Radeon/Intel-Arc support; plan carefully including edge cases) moved
+the decision point: **a beta is a user-facing gate** — shipping it with a
+Film Lab that feels dead and multi-second previews would spend the one
+first impression a beta gets. M5 therefore splits into two owner-gated
+phases; the original beta scope is unchanged and becomes **M5-B**.
+
+#### M5-A — Creative depth & preview speed (code-verified diagnosis first)
+
+**A1 · Preview transport correctness (P0 — the "Film Lab not good yet" bug).**
+Diagnosis verified against `main` @ 5f2d34f (three real defects, not guesses):
+1. `FilmLab.svelte` invokes `render_preview` with `maxDim: 0`; in
+   `render.rs::downscale_ap1` a `max_dim` of 0 is the **identity** → the film
+   chain renders at **full source resolution** on every slider commit (the
+   M2 §4 measurement was 3.4–4.4 s at 3.1 MP *preview* scale — full-res is
+   ~8× that on a 24 MP source) and ships a wire frame up to ~100 MB that the
+   caller then **discards** (`.catch(() => {})`).
+2. The preview cache key (`compose_preview`) omits `max_dim` → a full-res
+   render **poisons the slot** for every later bounded request: a Viewport
+   `refresh()` at 1600 px receives a full-res image from cache (frame-size
+   explosion) — or the slot is dropped by the budget and every render stays
+   a miss.
+3. `selectStock()` never requests a render → picking a stock shows **no
+   visual change** until a slider moves; the `busy` gate silently swallows
+   rapid slider commits (no last-wins coalescing).
+Fixes + acceptance: command-boundary validation `256..=2560` (`0` = fall
+back to `Settings.preview_max_dim`; outside → typed error
+`render.max_dim_out_of_range`); `max_dim` folded into the cache key (test:
+same params, different `max_dim` → different keys, no cross-size poisoning);
+Film Lab routes through the App-level `viewport.refresh()` — **one render
+path**, stock select included; last-wins coalescing. Edge cases: viewport
+resize mid-render; 24 MP sources (wire frame hard-capped ≈ 26 MB);
+`original_frame` bounded identically (compare parity); budget-exceeded
+frames stay un-retained (the existing honest degradation).
+
+**A2 · Film-chain preview speed (the measured 3.4–4.4 s vs ≤ 50 ms / 400 ms
+budget — executing the M2 §5 plan in spec order).**
+1. **Strip threading** — embarrassingly parallel; the tiled≡mono gate already
+   proves order-independence, so there is no determinism risk; the cheapest
+   big win on multi-core owner hardware (the 2-core sandbox halves it).
+2. **Grain fast path** (FILM_MODEL §G correlated-noise approximation) — the
+   §L statistical gates apply **unchanged** to the fast path (RMS ±10 %,
+   PSD ±15 %, ρ ±0.05): a fast approximation that misses the statistics is a
+   bug, not a feature. UI-labelled "grain (fast preview)"; export always
+   uses the full model.
+3. **GPU spatial kernels** (grain gather + halation as WGSL compute, the
+   `film_pixel` parity-harness pattern). lightcraft's public ~4 ms/24 MP
+   slider re-render on wgpu compute (M4 Pro) is the existence proof that the
+   budget is reachable; parity gates run on CI adapters, CPU stays the
+   reference path.
+Re-measure, re-pin §4 honestly. Edge cases: the zoom-consistency gate must
+still pass at preview scale on the fast path; the memory-budget gate re-runs
+(threading changes buffer lifetimes); no adapter → CPU identical (existing
+fallback contract).
+
+**A3 · Bundled LUT library (the "famous LUTs, especially Rec709" ask).**
+- **Tier 1 — generated in-repo (GPL, no external rights needed):**
+  (a) **camera-log→Rec709 technical LUTs** baked from *published* transfer
+  functions (first slice: ARRI LogC3 + LogC4, Sony S-Log3, Panasonic V-Log,
+  Canon CLog3, Fuji F-Log) — new camera-log `LutEncoding` variants +
+  golden-vector tests in `melography-color` against the vendors' published
+  reference values; a `tools/` baker; vendor LUTs are downloaded at **dev
+  time only** for validation and **never bundled** (their redistribution
+  terms are unverified) — validation deltas land in the tool output, not the
+  repo. (b) **PFE-style print LUTs generated from our own print stage** —
+  honest non-trademark names, provenance `generated`.
+- **Tier 2 — externally sourced, license-gated by the existing
+  manifest/provenance machinery:** G'MIC film styles (CeCILL), Pat David's
+  original set (license to verify before bundling — expected CC BY-SA),
+  the YahiaAngelo `.cube` conversions (MIT packaging). Every entry carries
+  license + source URL + SHA-256 in `LICENSES-LUTS.md`; the existing
+  `license_unclear` gate refuses anything unverifiable.
+- Bundling via `bundle.resources` (the PR#32 stocks pattern) + an
+  `app-bundle` CI assertion (≥ N bundled LUTs in the .deb); UI: a read-only
+  "Built-in" section in the LUT panel beside user imports.
+Edge cases: encoding contracts flow through the insertion-point machinery
+(declared input = camera log; output `rec709-gamma2.4` — already in the
+vocabulary); `rec709-gamma2.4` vs sRGB-piecewise must never be conflated;
+bundled LUTs load through the existing hash-verified path (tamper-evident).
+
+**A4 · GPU adapter support & diagnostics (the "Nvidia/Radeon/Intel Arc" ask).**
+Adapter selection in Settings → "Graphics": Auto (policy: discrete >
+integrated > software, documented vendor tie-break) + explicit per-adapter
+pick with honest "why unavailable" rows (UX_SPEC §9 pattern); backend
+preference Vulkan → DX12 → Metal → GL, software (llvmpipe) last resort and
+labelled "slow (software)". Known-issue matrix from research: mixed-GPU
+systems pick the wrong adapter without a selector (wgpu/Steam reports);
+DX12-only VMs; Intel Arc on Linux needs recent Mesa; device-loss recovery
+(eGPU unplug → re-init; GPU auto-disabled after N failures, persisted);
+zero adapters → CPU path + honest message. A **local-only diagnostics view**
+(adapter, driver, backend, parity status, probe timings, render telemetry)
+with opt-in export for bug reports — **no telemetry** (R-PRV-1 stands).
+
+**A5 · lightcraft reference** (research → `comparables.md` §6; Apache-2.0/MIT
+dual license — GPL-compatible, reuse permitted with attribution). Borrowings:
+background render worker pool (loupe/thumbnails off the UI thread); the
+~4 ms/24 MP wgpu proof (calibrates the A2.3 target); preset-Amount pattern
+(extend LUT intensity semantics to stocks). Confirmed differentiation:
+lightcraft ships **no LUT support and no film emulation** — our bundled
+library + physical film model stays the edge.
+
+**M5-A exit:** Film Lab interactions are bounded and instant on the owner's
+machine (no full-res renders, no discarded frames); preview p50 within the
+re-pinned §4 budget on declared reference hardware (shortfalls documented,
+never hidden); ≥ 6 camera-log→Rec709 LUTs + print LUTs bundled and
+license-clean; adapter picker + diagnostics shipped; every A1 defect class
+has a regression test.
+
+#### M5-B — Beta engineering v0.1 (the original M5 scope, unchanged)
 Tasks: packaging matrix (ADR-0005) · updater end-to-end on dummy→beta channel with owner-held keys (owner generates; CI uses Secrets) · release workflow + protected Environment `release` · recovery docs · beta opt-in flow (Settings) · CHANGELOG + install/recovery guides.
 **Exit:** reproducible signed builds from tagged commit; updater roundtrip verified on all 3 OSes by owner (or documented device gaps); **release published only after explicit owner approval** (OPEN_QUESTIONS #2/#5).
 
@@ -90,7 +204,9 @@ Tasks: packaging matrix (ADR-0005) · updater end-to-end on dummy→beta channel
 | R-FILM-2 | Stock profiles are versioned data + provenance labels | presets | M2 | schema tests + UI badges | FM §J |
 | R-AI-1 | Local-only, CPU-guaranteed, parameter-output AI; manifest gate | ai | M3 | ADR-0004 §4 checklist | AI doc |
 | R-UX-1 | 7-screen UX, EN+VI, a11y, high-DPI, keyboard map | app | M4 | walkthroughs + pseudo-locale CI | UX_SPEC |
-| R-UPD-1 | Signed updater, channels, consent, supersede-rollback | app/rel | M5 | S4 + M5 roundtrip evidence | ADR-0005 |
+| R-UPD-1 | Signed updater, channels, consent, supersede-rollback | app/rel | M5-B | S4 + M5-B roundtrip evidence | ADR-0005 |
+| R-LUT-2 | Bundled LUT sets incl. camera-log→Rec709; license-clean, tamper-checked | lut/presets | M5-A | manifest gate + app-bundle CI assertion | PLAN M5-A A3 |
+| R-GPU-1 | Adapter selection (auto+manual), vendor matrix, device-loss recovery, local-only diagnostics | gpu/app | M5-A | unit tests + owner-device probes | PLAN M5-A A4 |
 
 ## 4. Performance budgets (targets; re-pinned by M0 measurements on declared hardware)
 
@@ -187,8 +303,9 @@ for exactly that measurement.
 | 6 | macOS/Windows runtime gaps without test devices | High | Medium | CI smoke + owner devices when available; honest gap docs (OPEN_Q #8) |
 | 7 | Model weights licensing dead-ends M3 candidates | Medium | Low-Med | non-ML baseline ships regardless; vetting gate decides early |
 | 8 | Updater signing mistakes break trust | Low | High | owner-held keys; S4 dry-runs; supersede-rollback runbook |
-| 9 | Performance budgets missed on integrated GPUs | Medium | Medium | budget tests from M0; fast-preview paths (grain fast mode; LUT-baked preview option) |
+| 9 | Performance budgets missed on integrated GPUs | Medium | Medium | budget tests from M0; **M5-A A2 executes the fast path** (threading + grain fast mode + GPU spatial kernels) |
 | 10 | License/attribution mistakes when reusing GPL code | Low | High | provenance.json + THIRD_PARTY_NOTICES CI check + skill `license-and-asset-vetting` |
+| 11 | Bundled-LUT licensing/provenance mistakes | Medium | High (legal) | Tier-1 self-generated first (published formulas + own print stage); Tier-2 only after license verification (CeCILL / CC BY-SA / MIT candidates) via the existing manifest gate; `LICENSES-LUTS.md` + provenance CI |
 
 ## 6. Definition of Done (every milestone, non-negotiable)
 

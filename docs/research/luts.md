@@ -67,3 +67,54 @@ Implemented on `agent/m1-lut-workflow` (see crates/lut + tools/lut_oracle.py):
   Corrupt explicit states; sidecars reference by hash — sidecar v1).
 - §5 test matrix: all rows green locally; GPU parity + 3-OS legs run in CI
   on the branch (first run pending at time of writing).
+
+## 6. Bundled-set sourcing (session 13, 2026-10-25 — feeds M5-A A3)
+
+Owner ask: ship famous, ready-to-use LUTs, "especially the Rec709 ones",
+like commercial graders expect. Research verdict — two tiers, license-clean
+by construction, nothing bundled on an unverified term:
+
+### Tier 1 — generated in-repo (GPL; no external rights needed)
+
+1. **Camera-log→Rec709 technical LUTs**, baked from *published* transfer
+   functions (math is not copyrightable; vendor LUT *files* are never
+   redistributed — their terms are unverified). First slice: ARRI LogC3 +
+   LogC4 (EIC-CGS published formulas), Sony S-Log3, Panasonic V-Log, Canon
+   CLog3, Fuji F-Log. Plan: new camera-log `LutEncoding` variants (fixed
+   vocabulary, declared-input only) + golden-vector tests in
+   `melography-color` against the vendors' published reference values; a
+   `tools/` baker writes `.cube` (rec709-gamma2.4 output — encoding already
+   in the vocabulary); validation deltas vs vendor-published LUTs land in
+   the tool output only, never in the repo.
+2. **PFE-style print LUTs generated from our own print stage** (M2 print
+   profiles) — honest non-trademark names, provenance `generated`; no
+   Kodak/Fuji trademarks in our LUT names.
+
+### Tier 2 — externally sourced, license-gated (existing manifest machinery)
+
+Candidates found (session 13 web research), all GPL-compatible *classes*:
+
+- **G'MIC film styles** — CeCILL (LGPL-like/GPL-compatible); upstream
+  gmic.eu/color_presets. Verify each style's file header at import.
+- **Pat David's film-emulation set** (the famous GIMP/G'MIC one, converted
+  to `.cube` by third parties) — expected CC BY-SA (verify at
+  patdavid.org before bundling; the canonical page was unfetchable this
+  session — flagged as a to-verify item, not a fact).
+- **YahiaAngelo/Film-Luts** (GitHub) — MIT packaging of a G'MIC film-LUT
+  collection; MIT is GPL-compatible; attribution + notice preserved.
+- **slay/luts** (GitHub) — CC BY 4.0, 5 looks; small but clean.
+
+Rule (unchanged from §4 + the M1 gate): every bundled entry carries
+license + source URL + SHA-256 in `LICENSES-LUTS.md`; the library loader
+re-verify checksums at load; `license_unclear` is refused loudly (the fuzz
+corpus already exercises that refusal). Trademark note: descriptive names
+only ("Warm Print A"), never stock brands.
+
+### Rec709 confusion guard (the edge case most apps get wrong)
+
+Rec709 *primaries* + gamma 2.4 (`rec709-gamma2.4`) ≠ sRGB piecewise
+(same-ish primaries, different transfer) ≠ Rec709 *display-linear*. The
+encoding contract (§3) already enforces per-LUT declared input/output;
+bundled technical LUTs declare input = camera log, output =
+`rec709-gamma2.4`, and the insertion-point machinery wraps them in the
+authored space. UI copy must never call any of these "sRGB".

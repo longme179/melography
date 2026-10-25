@@ -1,98 +1,88 @@
 # MELOGRAPHY — Agent State
 
-**Updated:** 2026-10-25 (M4 session 10, #25 delivered pending review — M4 scope complete) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
+**Updated:** 2026-10-25 (session 13 — M5 restructure planned, PR pending owner review) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
 
 ## Current milestone
 
-**M4 (UX polish & hardening)** — **scope complete on branch
-`agent/m4-ux-hardening`, all parts merged through PR #29 (#23 ✅ #24
-core ✅ #15 ✅) except session 10 (#25) which awaits owner review.**
-Sessions 06–09 delivered the session model, screens/panels, batch
-queue, i18n/a11y (evidence: the M4 quality reports). **Session 10
-(#25, this branch) — hardening: memory budget met (1265 MiB peak vs
-2048 MiB @ 49.8 MP, exact VmHWM; two real full-res-buffer lifetime
-bugs found & fixed); kill-during-export battery (anchored-kills SIGKILL,
-mutation-validated 4/4, all encoders atomic); fuzz battery (4 targets,
-`fuzz/` crate, CI bursts, 0 crashes, 156k decode execs locally); secret
-scan + provenance gate (16 patterns × 335 files; 14 binary assets
-sha-verified; 2 unprovenanced icons found); error-state inventory (38
-codes × EN/VI × matrix, test-enforced; 2 untranslated codes found);
-cache budgets enforced + hit-rate in the S2 status bar; cross-platform
-build scripts (Ubuntu/Debian/Fedora/Arch/Windows/macOS + BUILDING.md).
-Evidence: `docs/quality/M4_HARDENING_REPORT.md`. Next: M5 (owner-gated
-— packaging matrix + gated release workflow).**
+**M5 — Controlled beta v0.1, restructured into M5-A (depth & speed) →
+M5-B (beta engineering)** (session 13, owner-gated). Rationale: the
+owner's first-functional-run verdict — *works; incomplete features;
+small bugs; slow-but-optimizable preview; Film Room not good yet* —
+plus four explicit asks (bundled famous LUTs esp. Rec709; lightcraft as
+reference; Nvidia/Radeon/Intel-Arc support; careful planning incl. edge
+cases). A beta is a user-facing gate: M5-A fixes the product first.
+
+M5-A slices (full detail in PLAN §2 M5-A):
+- **A1 preview transport correctness (P0)** — three code-verified
+  defects: FilmLab renders full-res via `maxDim: 0` (downscale
+  identity) and discards the ~100 MB frame; the preview cache key
+  omits `max_dim` (full-res poisoning of the slot); stock select never
+  re-renders; the `busy` gate swallows rapid commits.
+- **A2 preview speed** — the M2 §5 plan executed in spec order: strip
+  threading → grain fast path (§L gates unchanged) → GPU spatial
+  kernels; §4 re-pinned honestly afterwards.
+- **A3 bundled LUT library** — Tier 1 self-generated (camera-log→Rec709
+  from published formulas; PFE-style from our own print stage) +
+  Tier 2 license-gated externals; research in `docs/research/luts.md` §6.
+- **A4 GPU adapter UX + diagnostics** — auto/manual picker, backend
+  order, device-loss recovery, local-only diagnostics (R-GPU-1).
+- **A5 lightcraft borrowings** — `docs/research/comparables.md` §6
+  (Apache-2.0/MIT dual, GPL-compatible).
 
 ## Branch / PR / HEAD
 
-- Working branch: `agent/m4-ux-hardening` (recreated from main @ 7df83ea)
-- M4 sessions 06–09: merged (PRs #26, #27, #28, #29); #23 closed by owner
-- M4 session 10 (#25, hardening + build scripts): delivered on this
-  branch — PR to open (owner review required; closes #25 when merged)
-- Issue permissions: PAT has them; branch protection on `main` =
-  owner-side (unchanged).
+- Working branch: `agent/m5-planning` (from main @ 5f2d34f = PR #33)
+- This PR: PLAN.md M5 restructure + `luts.md` §6 + `comparables.md` §6
+  + this STATE re-pin + session log 13 — **owner review required**
+- Prior sessions 10b/11/12 (build config, functional, CSP/IPC): all
+  merged (PRs #31, #32, #33); the app builds, opens, imports, adjusts
+  and previews on the owner's Fedora 44 (owner-confirmed this session)
 
-## Session 10 delivered (#25 — details in session log 10 + M4_HARDENING_REPORT)
+## Session 13 delivered (this PR — planning only, no code changes)
 
-1. ✅ Memory budget: **1265 MiB peak vs 2048 MiB @ 49.8 MP** (exact
-   VmHWM; release gate `crates/cli/tests/memory_budget.rs`, CI
-   `memory-budget` 3 OSes) — two real full-res-buffer lifetime bugs
-   found & fixed in `cmd_apply`/`cmd_film_apply` (pre-tone buffer
-   survived its replacement; decoded/ap1/working/output-slab held to
-   end-of-report)
-2. ✅ Kill-during-export: all 4 stage-S5 encoders publish through
-   `atomic_write_durable[_with]`; battery `crates/io/tests/export_kill.rs`
-   (progress-pipe-anchored SIGKILL, 9 rounds × 3 formats, retry
-   contract) — **mutation-validated 4/4** after the naive version
-   failed sensitivity testing
-3. ✅ Fuzz battery: `fuzz/` crate (4 targets — decode/cube/sidecar/
-   manifest; nightly + libFuzzer; seeds committed + provenance-checked)
-   + `scripts/gen_fuzz_corpus.py`; CI `fuzz-burst` 30 s/target; local
-   validation 0 crashes (decode 156,751 execs / 46 s)
-4. ✅ Secret scan + provenance: `scripts/secret_scan.py` (16 patterns,
-   .gitignore policy executable, allowlist-with-reasons) +
-   `scripts/provenance_check.py` (sibling + directory records,
-   sha256-verified; 2 unprovenanced icons found & recorded)
-5. ✅ Error-state inventory: `docs/quality/ERROR_STATE_INVENTORY.md`
-   (38 codes × taxonomy × EN/VI × surface × next action) +
-   `scripts/error_inventory.py` (3-way enforced; **2 untranslated codes
-   found & fixed** — io.encode, lut.encoding_mismatch)
-6. ✅ Cache budgets: `Settings.cache_budget_mb` enforced (preview slot
-   full share, LUT LRU quarter share) + `cache_stats` command + S2
-   status-bar hit-rate (EN/VI) + live budget updates; 7 new unit tests
-7. ✅ Build scripts: `scripts/build/{build-linux.sh,build-windows.ps1,
-   build-macos.sh}` (Ubuntu/Debian/Fedora/Arch detect; universal macOS;
-   unsigned-by-design) + `docs/BUILDING.md` + README §3 rewrite +
-   `bundle.active: true` (local bundling; no CI job runs tauri build)
+1. ✅ Environment re-verified after another reset: the "346 modified
+   files" in the clone were 100644→100755 mode noise (0 insertions/
+   0 deletions) — hard-reset onto main @ 5f2d34f, nothing lost
+2. ✅ Root-cause diagnosis of "Film Room not good yet" + "slow preview"
+   — three real defects verified in code (PLAN M5-A A1), not guesses
+3. ✅ LUT sourcing research (web): Tier-1/Tier-2 candidates + licenses
+   (G'MIC CeCILL; Pat David to-verify; YahiaAngelo MIT; slay CC BY);
+   Rec709-confusion guard documented
+4. ✅ lightcraft researched (Apache-2.0/MIT) — borrowings list +
+   differentiation confirmed (it ships no LUT support, no film
+   emulation)
+5. ✅ PLAN.md: M5 → M5-A/M5-B + graph, R-LUT-2/R-GPU-1 rows, risk #9
+   updated + new risk #11 (bundled-LUT licensing)
 
-## Local verification (this machine)
+## Local verification (this machine — docs-only PR)
 
-- Rust: core+io 19 tests ✓ (incl. both kill batteries) · cli 4 E2E ✓ +
-  release budget run 1265/2048 MiB ✓ · workspace fmt/clippy ✓ · app
-  headless 47+3 tests ✓ clippy 0 warnings ✓ (sandbox: no webkit —
-  pkg-config shim for check-only, documented in session log)
-- UI: `tsc` ✓ · `vite build` ✓ · `build:pseudo` ✓ · i18n audit PASS
-  (327 keys, 28→38-code inventory consistent) · contrast audit PASS
-- Gates: validate_docs ✓ · secret_scan ✓ · provenance ✓ ·
-  error_inventory ✓ · fuzz bursts ×4 ✓ (0 crashes)
-- Sandbox: fresh env (reset); Rust 1.99.1 + nightly reinstalled;
-  node_modules via npm ci; disk 9.3G free
+- All edits are documentation; no Rust/UI code touched → the standard
+  CI gates do the real verification (validate_docs, fmt, clippy, tests,
+  secret_scan, provenance, error_inventory, app-bundle)
+- Sandbox limits (checked this session): node/npm/python3 present;
+  **no cargo** — Rust verification via CI, as in sessions 10–12
+
 ## Environment (reproducibility)
 
 Sandbox resets between sessions — restore pattern: PAT →
-`/home/z/my-project/.secrets/gh_token` (chmod 600); clone; `npm ci` in
-`apps/melography-app/ui`. Toolchain notes from sessions 06–08 (lld
-RUSTFLAGS etc.) apply only to Rust GUI builds — none needed this session.
+`/home/z/my-project/.secrets/gh_token` (chmod 600); clone; if the
+reset leaves mode-noise ("M" on every file, 0/0 diffs) hard-reset onto
+origin/main (`git checkout -f main && git reset --hard origin/main &&
+git clean -fdq`); `npm ci` in `apps/melography-app/ui` when UI work
+resumes.
 
 ## Next five atomic actions
 
-1. Push the branch, open the session-10 PR (#25 — owner review
-   required); after merge, close #25 with the report link
-2. M5 (owner-gated): packaging matrix, updater beta roundtrip with
-   owner-held keys, gated release workflow — the build scripts from
-   session 10 are the local-build half of that story
-3. Owner-device follow-ups queued for beta: live SR pass (NVDA/Orca/
-   VoiceOver), EN/VI screenshots, GPU budget legs (OPEN_Q #8),
-   first real run of build-windows.ps1 / build-macos.sh
-4. Watch the first CI runs of the two new jobs (memory-budget,
-   fuzz-burst) — Windows/macOS numbers land in CI logs, not the sandbox
-5. Keep PLAN.md M4 progress + STATE.md re-pinned after each slice
+1. Owner reviews this planning PR → merge → M5-A starts with **A1**
+   (small, P0, unblocks every interaction; branch
+   `agent/m5a1-preview-transport`)
+2. A1 acceptance: command-boundary validation (256..=2560, 0 =
+   `Settings.preview_max_dim`) + `max_dim` in the cache key + a single
+   render path via `viewport.refresh()` + last-wins coalescing;
+   regression tests in `tests/command_flow.rs` + render tests
+3. A2.1 strip threading next (cheapest big win), in parallel with the
+   A3 Tier-1a baker skeleton — independent files, one PR per slice
+4. Owner-device probes once A1 lands: preview p50/p95 at bounded
+   maxDim on the Fedora 44 machine → re-pin §4 with real numbers
+5. Pat David license verification (patdavid.org) before any Tier-2
+   bundling — never bundle unverified terms (risk #11)
