@@ -29,6 +29,7 @@ use crate::frame::FilmFrame;
 use crate::hash::RandStream;
 use crate::optics::Plane;
 use crate::profile::{GrainParams, LayerLayout, SigmaCurve, StockProfile};
+use melography_gpu::spatial_types::GrainGpuParams;
 
 /// Standard aperture for RMS granularity (mm) — grain.md §4.
 pub const APERTURE_MM: f64 = 0.048;
@@ -108,6 +109,39 @@ impl GrainField {
         // density read needs ±1 px more.
         let mm = self.r_max_mm + self.cell_mm;
         (mm / mm_per_pixel).ceil() as u32 + 1
+    }
+
+    /// A2.3 — pack this resolved field for the WGSL grain-gather kernel
+    /// (plain data, `melography-gpu::spatial_types`). The GPU evaluates
+    /// the same full model in f32; the u32 hash stream is bit-portable,
+    /// and the presence probability is shipped as the exact u32
+    /// threshold `ceil(p·2^32)` so presence decisions match the CPU's
+    /// f64 comparison bit-for-bit. The parity test owns the tolerance.
+    #[must_use]
+    pub fn gpu_params(&self, frame: &FilmFrame, w: u32, h: u32) -> GrainGpuParams {
+        let thr_f = (self.presence_p * 4_294_967_296.0).ceil();
+        let presence_always = thr_f >= 4_294_967_296.0;
+        let k = ((frame.mm_per_pixel / 0.006).round() as u32).clamp(1, 4);
+        GrainGpuParams {
+            enabled: self.enabled,
+            layers_mono: self.layers == LayerLayout::Monochrome,
+            mm_per_pixel: frame.mm_per_pixel as f32,
+            cells_per_mm: self.cells_per_mm as f32,
+            cell_mm: self.cell_mm as f32,
+            mu_r: self.mu_r as f32,
+            sigma_r: self.sigma_r as f32,
+            r_max_mm: self.r_max_mm as f32,
+            chol: self.chol.map(|v| v as f32),
+            a_norm: self.a_norm.map(|v| v as f32),
+            seed: self.seed,
+            presence_thr: if presence_always { 0 } else { thr_f as u32 },
+            presence_always,
+            w,
+            h,
+            k,
+            curve_density: self.sigma_curve.density.iter().map(|v| *v as f32).collect(),
+            curve_sigma: self.sigma_curve.sigma.iter().map(|v| *v as f32).collect(),
+        }
     }
 
     /// One-shot exact amplitude calibration: measure the aperture statistic

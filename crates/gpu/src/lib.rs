@@ -9,6 +9,7 @@
 //! only the shared types (honest no-op, not a fake pass).
 
 pub mod film_pixel_types;
+pub mod spatial_types;
 
 #[cfg(feature = "wgpu")]
 pub mod film_pixel;
@@ -18,6 +19,9 @@ pub mod lut3d;
 
 #[cfg(feature = "wgpu")]
 pub mod readback;
+
+#[cfg(feature = "wgpu")]
+pub mod spatial;
 
 #[derive(Debug, thiserror::Error)]
 #[error("GPU error: {0}")]
