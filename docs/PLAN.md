@@ -155,6 +155,26 @@ resize mid-render; 24 MP sources (wire frame hard-capped ≈ 26 MB);
 `original_frame` bounded identically (compare parity); budget-exceeded
 frames stay un-retained (the existing honest degradation).
 
+**Progress (session 16, A2.1 — strip threading):** shipped.
+`chain::render_threaded(img, params, workers)` splits the image into
+contiguous chunks, one `std::thread::scope` worker per chunk — no new
+dependencies, and chunks are just strips of their own height, so the §L
+contract (byte-identical for ANY partition) extends to any worker count
+(new gates: threaded≡mono across 2/3/4/8/16 + auto workers, tiny-image
+worker clamping, margin-heavy configs, and the scratch-bound invariant
+`h + n·2·m_total ≤ 2(h + 2·m_total)` unit-tested on `worker_cap`). The
+strip body was extracted UNCHANGED into `render_strip` shared by all
+three executors — one code path is what makes them byte-identical;
+`render`/`render_tiled` keep their exact sequential semantics (the
+existing tiled≡mono gate still passes untouched). The preview leg
+(`render_pipeline`) now calls `render_threaded(_, 0)` = one chunk per
+logical core; export keeps the sequential CLI path (memory-first,
+R-REN-2 — the CLI/memory-budget suites are untouched). Panic
+propagation: a failing worker resumes its panic in the caller
+(no swallowing, no double-panic). Evidence: PR #37; perf harness gains
+a `preview-threaded-2048x1536` leg (ignored, release-run — the honest
+re-measure for the §4 re-pin happens on the owner's machine).
+
 **A2 · Film-chain preview speed (the measured 3.4–4.4 s vs ≤ 50 ms / 400 ms
 budget — executing the M2 §5 plan in spec order).**
 1. **Strip threading** — embarrassingly parallel; the tiled≡mono gate already

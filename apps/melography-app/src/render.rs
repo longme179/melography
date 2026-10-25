@@ -372,7 +372,12 @@ fn render_pipeline(
         toned
     };
     if let Some(f) = film {
-        img = film_chain::render(&img, &f.params).map_err(|e| LutError::Malformed {
+        // A2.1 — strip threading: byte-identical to the monolithic chain
+        // (chunks are just another strip partition; the §L gate pins it
+        // for every worker count), one chunk per logical core, scratch
+        // capped at 2× the monolithic footprint. Export keeps the
+        // sequential CLI path (memory-first, R-REN-2).
+        img = film_chain::render_threaded(&img, &f.params, 0).map_err(|e| LutError::Malformed {
             detail: format!("film chain: {e}"),
         })?;
     }

@@ -30,6 +30,14 @@
 //! `(strip_h + 2·m_total)` rows — ~44 MB each at 6000 px width — plus the
 //! input/output images. Peak ≈ input + output + 3 planes, comfortably
 //! inside the ≤ 2 GiB @ 50 MP budget (R-REN-2).
+//! **Threading (A2.1).** `render_threaded` splits the image into
+//! contiguous chunks, one worker thread per chunk. Strips are
+//! independent by the tiling model above (shared read-only inputs,
+//! disjoint output rows), so chunking is just another strip partition
+//! and the output stays byte-identical — the §L gate pins that for
+//! every worker count. Each chunk carries its own margin set, so N
+//! workers need `h + N·2·m_total` plane rows; the worker cap keeps that
+//! within 2× the monolithic footprint.
 
 use crate::emulsion::{self, Adjustments, Emulsion};
 use crate::frame::FilmFrame;
@@ -117,131 +125,320 @@ pub fn render_tiled(
         return Ok(img.clone());
     }
     let (w, h) = (img.width(), img.height());
-    let frame = FilmFrame::from_dims(w, h, params.profile.crop_rule);
-    let mmpp = frame.mm_per_pixel;
-
-    // Resolve stages once per render.
-    let em: Emulsion = emulsion::resolve_emulsion(&params.profile, &params.adjustments, mmpp);
-    let grain = GrainField::resolve(
-        &params.profile,
-        params.adjustments.grain_intensity,
-        params.adjustments.grain_seed,
-    );
-    let print = Print::resolve(
-        &params.profile,
-        params.adjustments.inversion_path,
-        params.adjustments.print_exposure_stops,
-    );
-    let veiling_on = params.lens.veiling_amount > 0.0;
-    let veiling = GaussianKernel::new(params.lens.veiling_sigma_mm / mmpp);
-    let veiling_on = veiling_on && !veiling.is_identity();
-
-    let m_veiling = if veiling_on { veiling.radius_px } else { 0 };
-    let m_halation = em.input_margin();
-    let m_grain = grain.margin_px(mmpp);
-    let m_total = m_veiling + m_halation + m_grain;
+    let st = ChainStages::resolve(params, w, h);
 
     let strip_h = strip_h.clamp(1, h);
-    let buf_rows = (strip_h + 2 * m_total).clamp(1, h);
-    let mut plane_a = Plane::new(w, buf_rows);
-    let mut plane_b = Plane::new(w, buf_rows);
-    let mut plane_t = Plane::new(w, buf_rows);
+    let buf_rows = (strip_h + 2 * st.m_total()).clamp(1, h);
+    let mut planes = StripPlanes::new(w, buf_rows);
 
     let mut out_img = ImageF32::alloc(w, h, Channels::Rgb, 0.0);
-
+    let out = out_img.data_mut();
     let mut strip_y = 0u32;
     while strip_y < h {
         let strip_y1 = (strip_y + strip_h).min(h);
-        // Row regions (absolute, clamped): each stage's coverage derives
-        // top-down from the margins of the stages above it.
-        let r1 = Region::expand(strip_y, strip_y1, m_grain, h); // density
-        let r2 = Region::expand(r1.y0, r1.y1, m_halation, h); // excitation
-        let r3 = Region::expand(r2.y0, r2.y1, m_veiling, h); // vignetted
-        let y3 = r3.y0; // local row 0 of every strip plane
-
-        // -- Vignette (B) over r3 into plane_a (in place) ---------------------
-        for (ly, ay) in (r3.y0..r3.y1).enumerate() {
-            for x in 0..w {
-                let p = img.pixel(x, ay);
-                plane_a.set3(
-                    x,
-                    ly as u32,
-                    [f64::from(p[0]), f64::from(p[1]), f64::from(p[2])],
-                );
-            }
-        }
-        optics::apply_vignette_inplace(&mut plane_a, 0, r3.len(), r3.y0, &params.lens, &frame);
-
-        // -- Veiling (B) over r2 ------------------------------------------------
-        if veiling_on {
-            // Horizontal pass over all r3 rows into plane_t, vertical pass
-            // over the r2 window into plane_b, then mix into plane_t and
-            // move the result back to plane_a.
-            veiling.conv_h(&plane_a, &mut plane_t, 0, r3.len());
-            veiling.conv_v(&plane_t, &mut plane_b, r2.lo(y3), r2.hi(y3));
-            optics::apply_veiling_mix(
-                &plane_a,
-                &plane_b,
-                &mut plane_t,
-                r2.lo(y3),
-                r2.hi(y3),
-                params.lens.veiling_amount,
-            );
-            copy_rows(&plane_t, &mut plane_a, r2.lo(y3), r2.hi(y3));
-        }
-
-        // -- Excitation C1/C3 + A (EV, pre-desat) over r2 (in-place) -----------
-        emulsion::apply_excitation_inplace(
-            &mut plane_a,
-            r2.lo(y3),
-            r2.hi(y3),
-            &em,
-            params.adjustments.ev,
-            params.adjustments.pre_desaturate,
-        );
-
-        // -- Halation C2 over r1 (reads the r2 window) → plane_b ---------------
-        emulsion::apply_halation(
-            &plane_a,
-            &mut plane_b,
-            r1.lo(y3),
-            r1.hi(y3),
-            &em,
-            (r2.lo(y3), r2.hi(y3)),
-        );
-
-        // -- Response D + chemistry E over r1 (in-place per-pixel) -------------
-        emulsion::apply_response_inplace(&mut plane_a, r1.lo(y3), r1.hi(y3), &em);
-
-        // -- Grain G over the strip (reads the r1 window) → plane_b ------------
-        grain.apply(
-            &plane_a,
-            &mut plane_b,
-            strip_y - y3,
-            strip_y1 - y3,
-            &frame,
-            y3,
-            h,
-        );
-
-        // -- Print/scan F over the strip → plane_a, then into the output ------
-        print.apply(&plane_b, &mut plane_a, strip_y - y3, strip_y1 - y3);
-        {
-            let off = y3;
-            for (ly, ay) in (strip_y..strip_y1).enumerate() {
-                for x in 0..w {
-                    let v = plane_a.px64(x, ly as u32 + (strip_y - off));
-                    let p = out_img.pixel_mut(x, ay);
-                    p[0] = v[0] as f32;
-                    p[1] = v[1] as f32;
-                    p[2] = v[2] as f32;
-                }
-            }
-        }
-
+        render_strip(img, &st, &mut planes, strip_y, strip_y1, out, 0);
         strip_y = strip_y1;
     }
     Ok(out_img)
+}
+
+/// A2.1 — render with the image split into `workers` contiguous chunks,
+/// one thread per chunk. **Byte-identical to [`render`] for any worker
+/// count**: a chunk is just a strip of its own height, and the §L gate
+/// (any strip partition reproduces the monolithic bytes) extends to
+/// chunk partitions. Chunks read only shared read-only state (`img`, the
+/// once-resolved stages) and write only their own contiguous output
+/// rows — strips are independent by the tiling model, so there is no
+/// synchronization and no order dependence to reason about.
+///
+/// `workers: 0` = one per logical core. The count is clamped so every
+/// worker gets at least one output row and the total scratch stays
+/// bounded (see [`worker_cap`]): N chunks need `h + N·2·m_total` plane
+/// rows because each carries its own margin set.
+///
+/// The sequential executors (`render`, `render_tiled`) remain the
+/// reference path; the preview leg uses this one, export stays
+/// sequential (memory-first, R-REN-2).
+pub fn render_threaded(
+    img: &ImageF32,
+    params: &FilmChainParams,
+    workers: u32,
+) -> Result<ImageF32, ChainError> {
+    params.validate()?;
+    if img.channels() != Channels::Rgb {
+        return Err(ChainError::NotRgb(img.channels()));
+    }
+    if !params.adjustments.enabled {
+        return Ok(img.clone());
+    }
+    let (w, h) = (img.width(), img.height());
+    let st = ChainStages::resolve(params, w, h);
+    let m_total = st.m_total();
+    // Shared read-only across workers: bind the reference so the move
+    // closures below capture `&ChainStages` (Copy), not the struct by
+    // value (E0382 otherwise — a `move ||` that writes `&st` captures
+    // `st` itself).
+    let st = &st;
+
+    let requested = if workers == 0 {
+        std::thread::available_parallelism().map_or(1, |n| n.get() as u32)
+    } else {
+        workers
+    };
+    let n = requested.clamp(1, h.max(1)).min(worker_cap(h, m_total));
+
+    let mut out_img = ImageF32::alloc(w, h, Channels::Rgb, 0.0);
+    if n <= 1 {
+        // One chunk = the whole image: the exact monolithic render.
+        let buf_rows = (h + 2 * m_total).clamp(1, h);
+        let mut planes = StripPlanes::new(w, buf_rows);
+        render_strip(img, st, &mut planes, 0, h, out_img.data_mut(), 0);
+        return Ok(out_img);
+    }
+
+    // Contiguous row chunks; the remainder spreads over the first chunks.
+    let base = h / n;
+    let rem = h % n;
+    let mut chunks: Vec<(u32, u32)> = Vec::with_capacity(n as usize);
+    let mut y = 0u32;
+    for k in 0..n {
+        let rows = base + u32::from(k < rem);
+        chunks.push((y, y + rows));
+        y += rows;
+    }
+
+    // Disjoint interleaved-RGB output slices, one per chunk.
+    let mut rest = out_img.data_mut();
+    let mut outs: Vec<&mut [f32]> = Vec::with_capacity(chunks.len());
+    for &(y0, y1) in &chunks {
+        let len = (y1 - y0) as usize * w as usize * 3;
+        let (head, tail) = rest.split_at_mut(len);
+        outs.push(head);
+        rest = tail;
+    }
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(chunks.len());
+        for (&(y0, y1), out) in chunks.iter().zip(outs) {
+            handles.push(scope.spawn(move || {
+                let buf_rows = (y1 - y0 + 2 * m_total).clamp(1, h);
+                let mut planes = StripPlanes::new(w, buf_rows);
+                render_strip(img, st, &mut planes, y0, y1, out, y0);
+            }));
+        }
+        // A panicking worker resumes its panic in the caller — the same
+        // failure mode as a sequential render (no swallowing, no wrap).
+        for handle in handles {
+            if let Err(payload) = handle.join() {
+                std::panic::resume_unwind(payload);
+            }
+        }
+    });
+    Ok(out_img)
+}
+
+/// Upper bound on concurrent chunk workers (A2.1): total plane rows are
+/// `h + n·2·m_total`, and the cap keeps them ≤ 2× the monolithic
+/// footprint `h + 2·m_total` — i.e. `n ≤ (h + 4·m_total) / (2·m_total)`.
+/// With no neighbor stages (`m_total == 0`) memory does not constrain
+/// the split. Saturating arithmetic: `radius_px` is only u32-bounded for
+/// pathological σ, and the cap must never itself overflow.
+fn worker_cap(h: u32, m_total: u32) -> u32 {
+    if m_total == 0 {
+        u32::MAX
+    } else {
+        (h.saturating_add(m_total.saturating_mul(4)) / (2 * m_total)).max(1)
+    }
+}
+
+/// Stages resolved ONCE per render and shared read-only by every strip
+/// (and, in [`render_threaded`], by every worker thread — every field is
+/// plain data, so the struct is `Sync` by construction).
+struct ChainStages {
+    frame: FilmFrame,
+    lens: LensParams,
+    em: Emulsion,
+    grain: GrainField,
+    print: Print,
+    veiling: GaussianKernel,
+    veiling_on: bool,
+    /// Recipe knobs the strip body needs per pixel (the rest are folded
+    /// into the resolved stages above).
+    ev: f64,
+    pre_desaturate: f64,
+    m_veiling: u32,
+    m_halation: u32,
+    m_grain: u32,
+}
+
+impl ChainStages {
+    fn resolve(params: &FilmChainParams, w: u32, h: u32) -> Self {
+        let frame = FilmFrame::from_dims(w, h, params.profile.crop_rule);
+        let mmpp = frame.mm_per_pixel;
+
+        let em: Emulsion = emulsion::resolve_emulsion(&params.profile, &params.adjustments, mmpp);
+        let grain = GrainField::resolve(
+            &params.profile,
+            params.adjustments.grain_intensity,
+            params.adjustments.grain_seed,
+        );
+        let print = Print::resolve(
+            &params.profile,
+            params.adjustments.inversion_path,
+            params.adjustments.print_exposure_stops,
+        );
+        let veiling_on = params.lens.veiling_amount > 0.0;
+        let veiling = GaussianKernel::new(params.lens.veiling_sigma_mm / mmpp);
+        let veiling_on = veiling_on && !veiling.is_identity();
+
+        let m_veiling = if veiling_on { veiling.radius_px } else { 0 };
+        let m_halation = em.input_margin();
+        let m_grain = grain.margin_px(mmpp);
+
+        Self {
+            frame,
+            lens: params.lens,
+            em,
+            grain,
+            print,
+            veiling,
+            veiling_on,
+            ev: params.adjustments.ev,
+            pre_desaturate: params.adjustments.pre_desaturate,
+            m_veiling,
+            m_halation,
+            m_grain,
+        }
+    }
+
+    fn m_total(&self) -> u32 {
+        self.m_veiling + self.m_halation + self.m_grain
+    }
+}
+
+/// Strip-local scratch planes (A/B/T): reused across strips by the
+/// sequential executors, owned per worker by the threaded one.
+struct StripPlanes {
+    a: Plane,
+    b: Plane,
+    t: Plane,
+}
+
+impl StripPlanes {
+    fn new(w: u32, rows: u32) -> Self {
+        Self {
+            a: Plane::new(w, rows),
+            b: Plane::new(w, rows),
+            t: Plane::new(w, rows),
+        }
+    }
+}
+
+/// Render output rows `[strip_y, strip_y1)` into `out` — an interleaved
+/// RGB f32 slice whose row 0 is image row `out_origin` (0 for the
+/// sequential executors, the chunk origin for the threaded one).
+///
+/// THE single strip body shared by every executor (monolithic, tiled,
+/// threaded) — one code path is what makes them byte-identical, and the
+/// §L gate pins that contract from the outside.
+#[allow(clippy::too_many_arguments)]
+fn render_strip(
+    img: &ImageF32,
+    st: &ChainStages,
+    planes: &mut StripPlanes,
+    strip_y: u32,
+    strip_y1: u32,
+    out: &mut [f32],
+    out_origin: u32,
+) {
+    let (w, h) = (img.width(), img.height());
+    // Field borrows (disjoint by construction, same as the old locals):
+    // the big stage structs by reference, the Copy knobs via `st.…`.
+    let ChainStages {
+        frame,
+        lens,
+        em,
+        grain,
+        print,
+        veiling,
+        ..
+    } = st;
+    let StripPlanes {
+        a: plane_a,
+        b: plane_b,
+        t: plane_t,
+    } = planes;
+    // Row regions (absolute, clamped): each stage's coverage derives
+    // top-down from the margins of the stages above it.
+    let r1 = Region::expand(strip_y, strip_y1, st.m_grain, h); // density
+    let r2 = Region::expand(r1.y0, r1.y1, st.m_halation, h); // excitation
+    let r3 = Region::expand(r2.y0, r2.y1, st.m_veiling, h); // vignetted
+    let y3 = r3.y0; // local row 0 of every strip plane
+
+    // -- Vignette (B) over r3 into plane_a (in place) ---------------------
+    for (ly, ay) in (r3.y0..r3.y1).enumerate() {
+        for x in 0..w {
+            let p = img.pixel(x, ay);
+            plane_a.set3(
+                x,
+                ly as u32,
+                [f64::from(p[0]), f64::from(p[1]), f64::from(p[2])],
+            );
+        }
+    }
+    optics::apply_vignette_inplace(plane_a, 0, r3.len(), r3.y0, lens, frame);
+
+    // -- Veiling (B) over r2 ------------------------------------------------
+    if st.veiling_on {
+        // Horizontal pass over all r3 rows into plane_t, vertical pass
+        // over the r2 window into plane_b, then mix into plane_t and
+        // move the result back to plane_a.
+        veiling.conv_h(plane_a, plane_t, 0, r3.len());
+        veiling.conv_v(plane_t, plane_b, r2.lo(y3), r2.hi(y3));
+        optics::apply_veiling_mix(
+            plane_a,
+            plane_b,
+            plane_t,
+            r2.lo(y3),
+            r2.hi(y3),
+            lens.veiling_amount,
+        );
+        copy_rows(plane_t, plane_a, r2.lo(y3), r2.hi(y3));
+    }
+
+    // -- Excitation C1/C3 + A (EV, pre-desat) over r2 (in-place) -----------
+    emulsion::apply_excitation_inplace(plane_a, r2.lo(y3), r2.hi(y3), em, st.ev, st.pre_desaturate);
+
+    // -- Halation C2 over r1 (reads the r2 window) → plane_b ---------------
+    emulsion::apply_halation(
+        plane_a,
+        plane_b,
+        r1.lo(y3),
+        r1.hi(y3),
+        em,
+        (r2.lo(y3), r2.hi(y3)),
+    );
+
+    // -- Response D + chemistry E over r1 (in-place per-pixel) -------------
+    emulsion::apply_response_inplace(plane_a, r1.lo(y3), r1.hi(y3), em);
+
+    // -- Grain G over the strip (reads the r1 window) → plane_b ------------
+    grain.apply(plane_a, plane_b, strip_y - y3, strip_y1 - y3, frame, y3, h);
+
+    // -- Print/scan F over the strip → plane_a, then into the output ------
+    print.apply(plane_b, plane_a, strip_y - y3, strip_y1 - y3);
+    for ay in strip_y..strip_y1 {
+        let plane_row = ay - y3; // strip-local plane row of this output row
+        let out_row = (ay - out_origin) as usize;
+        let out_base = out_row * w as usize * 3;
+        for x in 0..w {
+            let v = plane_a.px64(x, plane_row);
+            let i = out_base + x as usize * 3;
+            out[i] = v[0] as f32;
+            out[i + 1] = v[1] as f32;
+            out[i + 2] = v[2] as f32;
+        }
+    }
 }
 
 /// Clamped absolute row region.
@@ -387,5 +584,99 @@ mod tests {
             m_bright > m_dark,
             "brighter input must print brighter: {m_bright} vs {m_dark}"
         );
+    }
+
+    // ── A2.1: the threaded executor ─────────────────────────────────────
+
+    /// The §L gate extension: chunks are just another strip partition, so
+    /// ANY worker count must reproduce the monolithic bytes. 512 rows at
+    /// workers=4 means real 128-row chunks on real threads — the split
+    /// path executes regardless of the runner's core count.
+    #[test]
+    fn threaded_equals_monolithic_bytes() {
+        let img = synthetic_photo(96, 512);
+        let p = params();
+        let mono = render(&img, &p).unwrap();
+        for workers in [2u32, 3, 4, 8, 16] {
+            let out = render_threaded(&img, &p, workers).unwrap();
+            assert_eq!(
+                mono.data(),
+                out.data(),
+                "workers={workers}: threaded render differs from monolithic"
+            );
+        }
+        // workers=0 (auto → one per logical core) is a valid partition too.
+        let auto = render_threaded(&img, &p, 0).unwrap();
+        assert_eq!(mono.data(), auto.data(), "auto workers differ");
+    }
+
+    /// More workers than rows: the clamp must hold and the bytes with it.
+    #[test]
+    fn threaded_tiny_image_clamps_workers() {
+        let img = synthetic_photo(24, 16);
+        let p = params();
+        let mono = render(&img, &p).unwrap();
+        for workers in [2u32, 8, 64] {
+            let out = render_threaded(&img, &p, workers).unwrap();
+            assert_eq!(
+                mono.data(),
+                out.data(),
+                "workers={workers} on a 16-row image differs"
+            );
+        }
+    }
+
+    /// Margin-heavy configs (veiling on, wide σ) engage the worker cap —
+    /// fewer chunks, each carrying its own big margin set — and the bytes
+    /// must still match the monolithic reference.
+    #[test]
+    fn threaded_margin_heavy_matches() {
+        let img = synthetic_photo(96, 512);
+        let p = params()
+            .with_adjustments(
+                Adjustments::default(),
+                LensParams {
+                    veiling_amount: 0.5,
+                    veiling_sigma_mm: 40.0, // wide bloom → hundreds of margin rows
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(p.lens.veiling_amount > 0.0);
+        let mono = render(&img, &p).unwrap();
+        for workers in [2u32, 4, 8] {
+            let out = render_threaded(&img, &p, workers).unwrap();
+            assert_eq!(
+                mono.data(),
+                out.data(),
+                "workers={workers} (margin-heavy) differs from monolithic"
+            );
+        }
+    }
+
+    /// The memory invariant of the worker cap: n chunks need
+    /// `h + n·2·m_total` plane rows, and that must stay ≤ 2× the
+    /// monolithic footprint `h + 2·m_total`.
+    #[test]
+    fn worker_cap_bounds_total_scratch() {
+        for (h, m) in [
+            (1u32, 0u32),
+            (1, 7),
+            (16, 3),
+            (512, 321),
+            (1700, 60),
+            (2048, 0),
+        ] {
+            for req in [1u32, 2, 3, 8, 64] {
+                let n = req.clamp(1, h.max(1)).min(worker_cap(h, m));
+                assert!(n >= 1, "h={h} m={m} req={req}: worker count must be ≥ 1");
+                if m > 0 {
+                    assert!(
+                        h as u64 + 2 * m as u64 * n as u64 <= 2 * (h as u64 + 2 * m as u64),
+                        "h={h} m={m} n={n}: total plane rows exceed 2× the monolithic footprint"
+                    );
+                }
+            }
+        }
     }
 }
