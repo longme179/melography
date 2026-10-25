@@ -84,8 +84,10 @@ impl Settings {
 
     /// Clamp user-editable values into their valid ranges (defense in
     /// depth: the UI validates too, but a hand-edited file must not
-    /// smuggle garbage into the render path).
-    fn clamped(self) -> Self {
+    /// smuggle garbage into the render path). Applied at load AND at
+    /// `set_settings` (A1: an out-of-range `preview_max_dim` must never
+    /// reach the render fallback, not even for one session).
+    pub(crate) fn clamped(self) -> Self {
         let mut s = self;
         if !LANGS.contains(&s.language.as_str()) {
             s.language = "en".into();

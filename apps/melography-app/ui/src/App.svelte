@@ -360,6 +360,7 @@
         <Viewport
           bind:this={viewport}
           imageOpen={$state.imageOpen}
+          imageKey={$state.sourcePath ?? ""}
           onWbPicked={refreshState}
         />
         <Filmstrip bind:this={filmstrip} visible={$state.imageOpen} onStockPicked={onLutChanged} />
@@ -391,7 +392,10 @@
                     {t("stock.browse")}
                   </button>
                 </div>
-                <FilmLab />
+                <!-- A1: one render path — film mutations (knobs AND stock
+                     select) refresh through the App-level viewport, like
+                     every other panel; FilmLab never renders by itself. -->
+                <FilmLab onChange={onLutChanged} />
               </div>
             {:else if activePanel === "lut"}
               <LutPanel bind:this={lutPanel} onChange={onLutChanged} />

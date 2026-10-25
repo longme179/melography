@@ -6,13 +6,23 @@
 //! wire format is a typed binary frame — never JSON-embedded pixel arrays
 //! and never giant base64 (ARCHITECTURE §6).
 //!
-//! **Preview vs export correctness:** the LUT stack applies at *full
-//! resolution* on the AP1 working image, and the result is cached per
-//! parameter-set; the viewport then downscales (box-average in linear AP1
-//! — correct filtering space) and display-transforms. At 100% zoom the
-//! preview pixels are the export pixels within published tolerance
-//! (UX_SPEC §4 viewport rule); zoomed-out previews are proxy renders like
-//! every other editor's (documented, not hidden).
+//! **Preview vs export correctness:** with no film leg active the LUT
+//! stack applies at *full resolution* on the AP1 working image (export-
+//! parity filtering), is box-averaged down to the preview bound (linear
+//! AP1 — correct filtering space) **once**, and the *bounded* result is
+//! cached per (parameter-set, `max_dim`); with a film leg the chain
+//! renders at preview scale after the linear downscale (film-plane
+//! coordinates, grain.md §3). At 100% zoom the preview pixels are the
+//! export pixels within published tolerance (UX_SPEC §4 viewport rule);
+//! zoomed-out previews are proxy renders like every other editor's
+//! (documented, not hidden).
+//!
+//! **Preview transport bounds (A1):** the IPC commands resolve `max_dim`
+//! through [`resolve_max_dim`] — `0` falls back to
+//! `Settings.preview_max_dim`, `256..=2560` passes, anything else is the
+//! typed `render.max_dim_out_of_range`. The internals (`compose_preview`,
+//! `compose_original`, `downscale_ap1`) stay permissive: trusted callers
+//! compose thumbnails at small bounds (48–256 px) through the same code.
 
 use melography_color as mcolor;
 use melography_core::{Channels, ImageF32};
@@ -23,6 +33,35 @@ use melography_lut::{CubeLut, LutError};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+
+/// Preview-transport bound range (A1): 256 px is a postage stamp,
+/// 2560 px is a 5K-class panel long edge. Bounded by construction — a
+/// 2560-px long edge caps the RGBA8 wire frame at ≈ 26 MB no matter the
+/// source resolution (a 24 MP source used to ship ~100 MB frames).
+pub const MAX_DIM_MIN: u32 = 256;
+pub const MAX_DIM_MAX: u32 = 2560;
+
+/// Resolve a UI-requested `max_dim` at the command boundary (A1).
+///
+/// * `0` — the legacy "unbounded" sentinel: fall back to
+///   `Settings.preview_max_dim` (itself clamped at load *and* at
+///   `set_settings`; clamped again here as defense in depth).
+/// * `MAX_DIM_MIN..=MAX_DIM_MAX` — passes through.
+/// * anything else — the typed `render.max_dim_out_of_range` error:
+///   a malformed request must never degrade into a full-res render
+///   (the A1 defect class), it must fail loudly and locally.
+pub fn resolve_max_dim(fallback: u32, max_dim: u32) -> Result<u32, crate::error::AppError> {
+    match max_dim {
+        0 => Ok(fallback.clamp(MAX_DIM_MIN, MAX_DIM_MAX)),
+        MAX_DIM_MIN..=MAX_DIM_MAX => Ok(max_dim),
+        other => Err(crate::error::AppError::new(
+            "render.max_dim_out_of_range",
+            format!(
+                "max_dim {other} outside {MAX_DIM_MIN}..={MAX_DIM_MAX} (0 = use Settings.preview_max_dim)"
+            ),
+        )),
+    }
+}
 
 /// Film leg input for preview composition: the resolved stock + knobs
 /// (`None` = identity). The preview applies the film chain **at preview
@@ -88,10 +127,13 @@ pub struct ResolvedLut {
     pub lut: Arc<CubeLut>,
 }
 
-/// Full-resolution LUT'd working image + the cache key it was built for.
+/// The bounded preview image + the cache key it was built for (A1: the
+/// slot caches the *preview-scale* artifact — long edge ≤ the `max_dim`
+/// it was composed for — never a full-resolution render).
 pub struct RenderCache {
     pub key: u64,
-    /// LUT-stack output at full resolution (AP1).
+    /// Preview-resolution result (AP1): film path = chain output at
+    /// preview scale; no-film path = full-res LUT output downscaled once.
     pub image: ImageF32,
     pub clamped_pixels: u64,
 }
@@ -220,11 +262,37 @@ pub fn ap1_to_rgba8_display(img: &ImageF32) -> Vec<u8> {
     rgba
 }
 
-/// Compose one preview frame from the (possibly cached) full-res render.
-/// Caching (#25): `cache` is the budgeted slot — hits/misses are counted,
-/// and a rendered image larger than `cache.budget_bytes` is NOT stored
-/// (honest degradation: re-render per interaction, surfaced via
-/// `cache_stats` — never a silent memory overrun).
+/// The cache key `compose_preview` keys on: base + LUT stack, the film
+/// leg, the tone leg (identity tone = no leg) AND the preview bound
+/// `max_dim` (A1). The cached artifact is the bounded preview image, so
+/// every input that changes its pixels changes the key: two viewport
+/// sizes never share a slot, and a differently-scaled frame can never be
+/// served to a bounded request (the A1 cross-size poisoning defect).
+#[must_use]
+pub fn preview_key(
+    base: &ImageF32,
+    stack: &[ResolvedLut],
+    film: Option<&FilmLeg>,
+    tone: Option<&melography_color::tone::ToneParams>,
+    max_dim: u32,
+) -> u64 {
+    let mut key = stack_key(base, stack);
+    if let Some(f) = film {
+        key ^= f.key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    if let Some(t) = tone.filter(|t| !t.is_identity()) {
+        key ^= tone_key(t).wrapping_mul(0x5851_F42D_4C95_7F2D);
+    }
+    key ^ u64::from(max_dim).wrapping_mul(0x2545_F491_4F6C_DD1D)
+}
+
+/// Compose one preview frame from the (possibly cached) bounded render.
+/// Caching (#25 + A1): `cache` is the budgeted slot — hits/misses are
+/// counted, the slot stores the *bounded* preview image (never
+/// full-resolution), and a bounded image larger than
+/// `cache.budget_bytes` is NOT stored (honest degradation: re-render per
+/// interaction, surfaced via `cache_stats` — never a silent memory
+/// overrun). The hit path is a blit: no re-filtering, no re-downscale.
 #[allow(clippy::too_many_arguments)]
 pub fn compose_preview(
     base: &ImageF32,
@@ -237,41 +305,38 @@ pub fn compose_preview(
     let start = std::time::Instant::now();
     // Identity tone params are exactly "no tone leg" — same key, same path.
     let tone = tone.filter(|t| !t.is_identity());
-    // Key covers the tone leg, the LUT stack AND the film leg.
-    let mut key = stack_key(base, stack);
-    if let Some(f) = film {
-        key ^= f.key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    }
-    if let Some(t) = tone {
-        key ^= tone_key(t).wrapping_mul(0x5851_F42D_4C95_7F2D);
-    }
-    let (full, clamped) = match cache.slot.as_ref().filter(|c| c.key == key) {
+    let key = preview_key(base, stack, film, tone, max_dim);
+    let (small, clamped) = match cache.slot.as_ref().filter(|c| c.key == key) {
         Some(c) => {
             cache.hits += 1;
             (c.image.clone(), c.clamped_pixels)
         }
         None => {
             cache.misses += 1;
-            let (img, clamped) = render_pipeline(base, stack, film, tone, max_dim)?;
-            if (img.byte_len() as u64) <= cache.budget_bytes {
+            let (rendered, clamped) = render_pipeline(base, stack, film, tone, max_dim)?;
+            // The slot caches the BOUNDED preview (A1): with a film leg
+            // the pipeline already rendered at preview scale; without one
+            // the LUT stack ran at full resolution (export-parity
+            // filtering) and is downscaled here — once — so the slot
+            // never retains a full-resolution image and later hits are
+            // blits, not re-filters.
+            let small = if film.is_some() {
+                rendered
+            } else {
+                downscale_ap1(&rendered, max_dim)
+            };
+            if (small.byte_len() as u64) <= cache.budget_bytes {
                 cache.slot = Some(RenderCache {
                     key,
-                    image: img.clone(),
+                    image: small.clone(),
                     clamped_pixels: clamped,
                 });
             } else {
                 // Budget enforcement (#25): too large to retain.
                 cache.slot = None;
             }
-            (img, clamped)
+            (small, clamped)
         }
-    };
-    let small = if film.is_some() {
-        // The film leg already rendered at preview scale; the LUT leg ran
-        // on that same image — no second downscale.
-        full
-    } else {
-        downscale_ap1(&full, max_dim)
     };
     let rgba = ap1_to_rgba8_display(&small);
     Ok(PreviewFrame {
@@ -285,8 +350,9 @@ pub fn compose_preview(
 
 /// Preview-scale pipeline: tone (full-res, scene-referred — same domain as
 /// export) → linear downscale → film chain (scale-free physics) → LUT
-/// stack (finishing semantics) — the cached image is the final
-/// preview-resolution result.
+/// stack (finishing semantics). With a film leg the returned image is the
+/// final preview-resolution result; without one it is the full-resolution
+/// LUT'd image — `compose_preview` bounds it before caching (A1).
 fn render_pipeline(
     base: &ImageF32,
     stack: &[ResolvedLut],
@@ -473,7 +539,8 @@ mod tests {
         let f1 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
         let f2 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
         assert_eq!(f1.rgba, f2.rgba, "cached path returns identical pixels");
-        assert!(cache.slot.as_ref().unwrap().key == stack_key(&base, &stack));
+        // A1: the slot key includes max_dim — same request, same key.
+        assert!(cache.slot.as_ref().unwrap().key == preview_key(&base, &stack, None, None, 16));
         assert_eq!(cache.hits, 1, "second compose hit");
         assert_eq!(cache.misses, 1, "first compose missed");
 
@@ -646,5 +713,119 @@ mod tests {
             );
         }
         assert!(g.is_valid());
+    }
+
+    // ── A1 · Preview transport regressions (M5-A) ────────────────────
+
+    fn film_leg_fixture() -> FilmLeg {
+        let profile = melography_film::profile::testing::test_profile();
+        let params = FilmChainParams::new(profile).expect("test profile is valid");
+        FilmLeg {
+            params,
+            key: film_leg_key("test-stock", &Adjustments::default()),
+        }
+    }
+
+    #[test]
+    fn max_dim_resolves_at_the_command_boundary() {
+        // 0 = the legacy "unbounded" sentinel → the Settings fallback
+        // (proved with a non-default value: the fallback is READ, not
+        // hardcoded).
+        assert_eq!(resolve_max_dim(1024, 0).unwrap(), 1024);
+        // In-range passes through; both bounds are inclusive.
+        assert_eq!(resolve_max_dim(1024, MAX_DIM_MIN).unwrap(), 256);
+        assert_eq!(resolve_max_dim(1024, MAX_DIM_MAX).unwrap(), 2560);
+        // Out of range → the typed error, never a silent full-res render.
+        for bad in [1u32, 255, 2561, 99_999, u32::MAX] {
+            let e = resolve_max_dim(1024, bad).unwrap_err();
+            assert_eq!(e.code, "render.max_dim_out_of_range", "max_dim={bad}");
+        }
+        // Defense in depth: even a drifted fallback clamps in range.
+        assert_eq!(resolve_max_dim(u32::MAX, 0).unwrap(), MAX_DIM_MAX);
+        assert_eq!(resolve_max_dim(1, 0).unwrap(), MAX_DIM_MIN);
+    }
+
+    #[test]
+    fn preview_cache_key_separates_viewport_sizes() {
+        // A1 regression (defect: the key omitted max_dim): same params,
+        // different max_dim → different keys, on BOTH legs — a bounded
+        // request can never hit a differently-scaled slot.
+        let base = gradient(64, 48);
+        let stack: Vec<ResolvedLut> = Vec::new();
+        assert_ne!(
+            preview_key(&base, &stack, None, None, 16),
+            preview_key(&base, &stack, None, None, 32)
+        );
+        let leg = film_leg_fixture();
+        assert_ne!(
+            preview_key(&base, &stack, Some(&leg), None, 16),
+            preview_key(&base, &stack, Some(&leg), None, 32)
+        );
+        // Identity tone folds out of the key (unchanged semantic).
+        use melography_color::tone::ToneParams;
+        assert_eq!(
+            preview_key(&base, &stack, None, None, 16),
+            preview_key(&base, &stack, None, Some(&ToneParams::default()), 16)
+        );
+    }
+
+    #[test]
+    fn bounded_request_never_receives_a_larger_cached_frame() {
+        // A1 regression (the slot-poisoning defect): after a large
+        // compose, a smaller request must NOT be served the stale larger
+        // frame from the slot — and the slot must hold the bounded image,
+        // never the full-resolution render.
+        let base = gradient(512, 384);
+        let stack: Vec<ResolvedLut> = Vec::new();
+        let mut cache = crate::cache::PreviewCacheState::new(u64::MAX);
+
+        let big = compose_preview(&base, &mut cache, &stack, None, None, 512).unwrap();
+        assert_eq!((big.width, big.height), (512, 384), "source fits — identity");
+        let slot = cache.slot.as_ref().expect("512-bounded render retained");
+        assert!(slot.image.width().max(slot.image.height()) <= 512);
+
+        let small = compose_preview(&base, &mut cache, &stack, None, None, 256).unwrap();
+        assert_eq!(
+            (small.width, small.height),
+            (256, 192),
+            "bounded by the REQUEST, not by what the slot happens to hold"
+        );
+        assert_eq!(
+            cache.misses, 2,
+            "different max_dim = different key = miss, never a stale hit"
+        );
+        let slot = cache.slot.as_ref().unwrap();
+        assert!(
+            slot.image.width().max(slot.image.height()) <= 256,
+            "slot replaced with the 256-bounded artifact, not the 512 one"
+        );
+    }
+
+    #[test]
+    fn film_leg_compose_is_bounded_by_max_dim() {
+        // A1 regression (the reported "Phòng phim" defect): with a film
+        // leg active the preview renders at preview scale — a max_dim of
+        // 0 used to mean "identity downscale" → a full-res film-chain
+        // render on every slider commit, shipped over IPC and discarded.
+        // The command boundary resolves 0 away; this pins the
+        // compose-level bound: frame and slot are both max_dim-bounded
+        // even when the source is much larger.
+        let base = gradient(600, 400);
+        let leg = film_leg_fixture();
+        let stack: Vec<ResolvedLut> = Vec::new();
+        let mut cache = crate::cache::PreviewCacheState::new(u64::MAX);
+
+        let f = compose_preview(&base, &mut cache, &stack, Some(&leg), None, 256).unwrap();
+        assert_eq!((f.width, f.height), (256, 171), "600×400 → 256-bounded");
+        assert_eq!(f.rgba.len(), 256 * 171 * 4, "wire frame matches geometry");
+        let slot = cache.slot.as_ref().expect("film render retained");
+        assert_eq!((slot.image.width(), slot.image.height()), (256, 171));
+
+        // Same leg at a different bound → miss + re-render at that scale
+        // (grain statistics are scale-correct, never a stretched stale
+        // frame).
+        let f2 = compose_preview(&base, &mut cache, &stack, Some(&leg), None, 128).unwrap();
+        assert_eq!((f2.width, f2.height), (128, 85));
+        assert_eq!(cache.misses, 2);
     }
 }

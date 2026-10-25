@@ -81,6 +81,26 @@ phases; the original beta scope is unchanged and becomes **M5-B**.
 
 #### M5-A — Creative depth & preview speed (code-verified diagnosis first)
 
+**Progress (session 14, A1 — preview transport):** shipped end-to-end.
+Command-boundary `resolve_max_dim` (`0` → `Settings.preview_max_dim`;
+`256..=2560`; else typed `render.max_dim_out_of_range` — EN/VI catalogs +
+inventory row added; `set_settings` now clamps too, closing the in-session
+drift window). `max_dim` folded into `preview_key`; the slot now caches the
+**bounded** preview image (no-film leg: full-res LUT output downscaled once
+before caching — never a full-res slot, hit path is a blit; budget-exceeded
+frames stay un-retained). Film Lab rerouted through the App-level
+`viewport.refresh()` — one render path, stock select re-renders, no panel
+invokes `render_preview` directly; viewport last-wins coalescing (mid-render
+requests collapse into one queued re-run reading the latest params/bound,
+including a failed-pass drain) + original-frame reuse keyed on
+(image, bound). Regression tests: boundary validation (sentinel, bounds,
+drifted fallback), key separation both legs, no cross-size stale hits, slot
+holds the bounded artifact, film compose bounded + wire-frame geometry.
+Known trade-off: a viewport-size change with no film leg re-renders once
+(was a cache hit + per-hit downscale) — coalescing bounds the storm, and
+≥35 MP sources gain caching they never had (bounded artifact fits budgets
+the full-res render blew). Evidence: PR #35.
+
 **A1 · Preview transport correctness (P0 — the "Film Lab not good yet" bug).**
 Diagnosis verified against `main` @ 5f2d34f (three real defects, not guesses):
 1. `FilmLab.svelte` invokes `render_preview` with `maxDim: 0`; in

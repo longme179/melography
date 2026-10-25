@@ -1,66 +1,48 @@
 # MELOGRAPHY — Agent State
 
-**Updated:** 2026-10-25 (session 13 — M5 restructure planned, PR pending owner review) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
+**Updated:** 2026-10-25 (session 14 — M5-A A1 preview transport shipped, PR pending owner review) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
 
 ## Current milestone
 
-**M5 — Controlled beta v0.1, restructured into M5-A (depth & speed) →
-M5-B (beta engineering)** (session 13, owner-gated). Rationale: the
-owner's first-functional-run verdict — *works; incomplete features;
-small bugs; slow-but-optimizable preview; Film Room not good yet* —
-plus four explicit asks (bundled famous LUTs esp. Rec709; lightcraft as
-reference; Nvidia/Radeon/Intel-Arc support; careful planning incl. edge
-cases). A beta is a user-facing gate: M5-A fixes the product first.
+**M5-A — Creative depth & preview speed** (session 13 restructure,
+owner-gated; full slice detail in PLAN §2 M5-A). **A1 (preview transport
+correctness, P0) is implemented on `agent/m5a1-preview-transport`** —
+the three code-verified defects (full-res `maxDim: 0` renders with
+discarded ~100 MB frames; cache key omitting `max_dim` → slot poisoning;
+stock select never re-rendering + the busy gate swallowing commits) all
+have fixes and regression tests. A2–A5 remain.
 
-M5-A slices (full detail in PLAN §2 M5-A):
-- **A1 preview transport correctness (P0)** — three code-verified
-  defects: FilmLab renders full-res via `maxDim: 0` (downscale
-  identity) and discards the ~100 MB frame; the preview cache key
-  omits `max_dim` (full-res poisoning of the slot); stock select never
-  re-renders; the `busy` gate swallows rapid commits.
-- **A2 preview speed** — the M2 §5 plan executed in spec order: strip
-  threading → grain fast path (§L gates unchanged) → GPU spatial
-  kernels; §4 re-pinned honestly afterwards.
-- **A3 bundled LUT library** — Tier 1 self-generated (camera-log→Rec709
-  from published formulas; PFE-style from our own print stage) +
-  Tier 2 license-gated externals; research in `docs/research/luts.md` §6.
-- **A4 GPU adapter UX + diagnostics** — auto/manual picker, backend
-  order, device-loss recovery, local-only diagnostics (R-GPU-1).
-- **A5 lightcraft borrowings** — `docs/research/comparables.md` §6
-  (Apache-2.0/MIT dual, GPL-compatible).
+## Session 14 delivered (this PR — A1)
 
-## Branch / PR / HEAD
+1. ✅ `resolve_max_dim` at the command boundary (`0` →
+   `Settings.preview_max_dim`, `256..=2560`, else typed
+   `render.max_dim_out_of_range`) — applied to BOTH `render_preview` and
+   `original_frame` (compare parity)
+2. ✅ `set_settings` clamps on save (`settings.clamped()` → `pub(crate)`) —
+   closes the in-session out-of-range fallback hole
+3. ✅ `preview_key(base, stack, film, tone, max_dim)` — max_dim folded
+   into the slot key; the slot caches the **bounded** preview image on
+   both legs (no-film: downscale once before caching; hit = blit; ≥35 MP
+   sources now fit the budget and cache at all)
+4. ✅ One render path: `FilmLab` takes `onChange` like every panel, wired
+   to `viewport.refresh()`; stock select re-renders; no panel invokes
+   `render_preview` directly
+5. ✅ Viewport last-wins coalescing (mid-render requests → one queued
+   re-run at the latest bound/params; failed-pass drain, no retry loop)
+   + original-frame reuse keyed on `(sourcePath, dim)`
+6. ✅ Regression tests for every A1 defect class (validation bounds,
+   key separation both legs, no cross-size stale hits, bounded slot,
+   bounded film compose); EN/VI catalogs + inventory row 39;
+   `error_inventory.py` PASS; PLAN progress line; session log 14
 
-- Working branch: `agent/m5-planning` (from main @ 5f2d34f = PR #33)
-- This PR: PLAN.md M5 restructure + `luts.md` §6 + `comparables.md` §6
-  + this STATE re-pin + session log 13 — **owner review required**
-- Prior sessions 10b/11/12 (build config, functional, CSP/IPC): all
-  merged (PRs #31, #32, #33); the app builds, opens, imports, adjusts
-  and previews on the owner's Fedora 44 (owner-confirmed this session)
+## Local verification (this machine)
 
-## Session 13 delivered (this PR — planning only, no code changes)
-
-1. ✅ Environment re-verified after another reset: the "346 modified
-   files" in the clone were 100644→100755 mode noise (0 insertions/
-   0 deletions) — hard-reset onto main @ 5f2d34f, nothing lost
-2. ✅ Root-cause diagnosis of "Film Room not good yet" + "slow preview"
-   — three real defects verified in code (PLAN M5-A A1), not guesses
-3. ✅ LUT sourcing research (web): Tier-1/Tier-2 candidates + licenses
-   (G'MIC CeCILL; Pat David to-verify; YahiaAngelo MIT; slay CC BY);
-   Rec709-confusion guard documented
-4. ✅ lightcraft researched (Apache-2.0/MIT) — borrowings list +
-   differentiation confirmed (it ships no LUT support, no film
-   emulation)
-5. ✅ PLAN.md: M5 → M5-A/M5-B + graph, R-LUT-2/R-GPU-1 rows, risk #9
-   updated + new risk #11 (bundled-LUT licensing)
-
-## Local verification (this machine — docs-only PR)
-
-- All edits are documentation; no Rust/UI code touched → the standard
-  CI gates do the real verification (validate_docs, fmt, clippy, tests,
-  secret_scan, provenance, error_inventory, app-bundle)
-- Sandbox limits (checked this session): node/npm/python3 present;
-  **no cargo** — Rust verification via CI, as in sessions 10–12
+- UI: `npm run build`, `ui_i18n_audit.mjs`, `ui_contrast_audit.mjs`,
+  pseudo-locale build — green locally
+- `error_inventory.py` + `validate_docs.py` — PASS locally
+- Sandbox limits (unchanged): node/npm/python3 present; **no cargo** —
+  Rust fmt/clippy/tests verified by CI; owner machine is the runtime
+  verifier (BUILDING.md)
 
 ## Environment (reproducibility)
 
@@ -73,16 +55,15 @@ resumes.
 
 ## Next five atomic actions
 
-1. Owner reviews this planning PR → merge → M5-A starts with **A1**
-   (small, P0, unblocks every interaction; branch
-   `agent/m5a1-preview-transport`)
-2. A1 acceptance: command-boundary validation (256..=2560, 0 =
-   `Settings.preview_max_dim`) + `max_dim` in the cache key + a single
-   render path via `viewport.refresh()` + last-wins coalescing;
-   regression tests in `tests/command_flow.rs` + render tests
-3. A2.1 strip threading next (cheapest big win), in parallel with the
-   A3 Tier-1a baker skeleton — independent files, one PR per slice
-4. Owner-device probes once A1 lands: preview p50/p95 at bounded
-   maxDim on the Fedora 44 machine → re-pin §4 with real numbers
+1. Owner reviews PR (A1) → merge → **A2.1 strip threading** (cheapest
+   big win; the tiled≡mono gate already proves order-independence)
+2. A2.2 grain fast path (FILM_MODEL §G approximation; §L statistical
+   gates apply unchanged); A2.3 GPU spatial kernels after re-measuring
+3. A3 Tier-1a camera-log→Rec709 baker (ARRI LogC3/LogC4, S-Log3, V-Log,
+   CLog3, F-Log from published transfer functions; golden vectors;
+   vendor LUTs dev-time-only, never bundled)
+4. Owner-device probes once A1 lands: preview p50/p95 at bounded maxDim
+   on the Fedora 44 machine → re-pin §4 with real numbers (known
+   trade-off to watch: no-film viewport resize re-renders once)
 5. Pat David license verification (patdavid.org) before any Tier-2
    bundling — never bundle unverified terms (risk #11)

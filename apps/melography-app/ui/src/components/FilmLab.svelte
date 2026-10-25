@@ -4,17 +4,19 @@
    *  prominent (UX_SPEC §5: artist-authored = "no measured calibration").
    *  Session 09 (#15): zero embedded strings — every label/tooltip goes
    *  through the i18n catalogs, numbers are locale-aware, and all knobs
-   *  use the shared Slider (double-click reset, arrows, typed values). */
+   *  use the shared Slider (double-click reset, arrows, typed values).
+   *  A1 (M5-A): renders route through the App-level viewport.refresh()
+   *  — the ONE render path, stock select included. No panel invokes
+   *  render_preview itself; rapid commits coalesce in the viewport
+   *  (last-wins) instead of a busy gate that silently swallows them. */
   import { invoke } from "@tauri-apps/api/core";
   import { film, stocks, toast, state, type Stock, type FilmAdjustments } from "../lib/stores";
   import { t, tEnum } from "../lib/i18n";
   import Slider from "./Slider.svelte";
 
-  let busy = false;
+  export let onChange: () => void = () => {};
 
   async function push(patch: Partial<FilmAdjustments>) {
-    if (busy) return;
-    busy = true;
     try {
       const adj = { ...$film.adjustments, ...patch };
       const next = await invoke<{ stock: string | null; enabled: boolean; adjustments: FilmAdjustments }>(
@@ -22,27 +24,25 @@
         { args: { stock: $film.stock, adjustments: adj } },
       );
       film.set(next);
-      await invoke("render_preview", { maxDim: 0 }).catch(() => {});
+      // App routes this to viewport.refresh() — the single render path.
+      onChange();
     } catch (e) {
       toast.set(String(e));
-    } finally {
-      busy = false;
     }
   }
 
   async function selectStock(id: string | null) {
-    if (busy) return;
-    busy = true;
     try {
       const next = await invoke<{ stock: string | null; enabled: boolean; adjustments: FilmAdjustments }>(
         "set_film",
         { args: { stock: id, adjustments: $film.adjustments } },
       );
       film.set(next);
+      // A1: stock select re-renders (was: no visual change until a
+      // slider moved — the reported "Phòng phim" symptom).
+      onChange();
     } catch (e) {
       toast.set(String(e));
-    } finally {
-      busy = false;
     }
   }
 
