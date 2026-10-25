@@ -780,7 +780,11 @@ mod tests {
         let mut cache = crate::cache::PreviewCacheState::new(u64::MAX);
 
         let big = compose_preview(&base, &mut cache, &stack, None, None, 512).unwrap();
-        assert_eq!((big.width, big.height), (512, 384), "source fits — identity");
+        assert_eq!(
+            (big.width, big.height),
+            (512, 384),
+            "source fits — identity"
+        );
         let slot = cache.slot.as_ref().expect("512-bounded render retained");
         assert!(slot.image.width().max(slot.image.height()) <= 512);
 
