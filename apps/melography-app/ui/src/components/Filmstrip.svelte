@@ -8,22 +8,19 @@
   import { t } from "../lib/i18n";
   import { film, stocks, stockThumbs, type StockThumb, type FilmState } from "../lib/stores";
   import { originalFrame } from "../lib/ipc";
+  import { putRgba } from "../lib/blit";
 
   export let visible = false;
   export let onStockPicked: () => void = () => {};
 
   let originalUrl: string | null = null;
 
-  function rgbaToDataUrl(w: number, h: number, rgba: Uint8ClampedArray): string {
+  function rgbaToDataUrl(w: number, h: number, rgba: Uint8ClampedArray<ArrayBuffer>): string {
     const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return "";
-    // NOTE: this is blitting Rust-produced pixels for a UI glyph, not
-    // computing any color — ADR-0001's "webview never computes pixels"
-    // is about the pipeline, and the same pattern serves Viewport.
-    ctx.putImageData(new ImageData(rgba, w, h), 0, 0);
+    // Single blit path (session 15): shares the validated RGBA→canvas
+    // code with the viewport — a mismatched/truncated frame yields an
+    // empty string (honest empty strip) instead of a canvas exception.
+    if (!putRgba(canvas, rgba, w, h)) return "";
     return canvas.toDataURL("image/png");
   }
 
