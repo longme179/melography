@@ -96,6 +96,7 @@ G(u, v, layer, seed, params) =
 - Determinism contract: function of continuous film coords + seed only — independent of output pixel grid, tile boundaries, zoom level, backend (CPU bit-exact; GPU within COLOR_PIPELINE §8 tolerances).
 - Preview at reduced resolution samples the same field with density-correct statistics (statistical-equivalence tests: RMS σ(D) ±10%, power-spectrum slope ±15%, layer ρ ±0.05 — grain.md §4).
 - Interactive fast path (if needed): correlated-noise approximation calibrated to the same statistical targets; label "grain (fast preview)" in UI; export always uses the full model unless user opts out.
+- **Fast path shipped (A2.2, session 17):** `FastGrain` implements the approximation as three octaves of tent-interpolated value noise on absolute film coordinates (Δ = 8/16/32 µm; incommensurate with the 6 µm gate grid on purpose), ±√3 uniform node marks Cholesky-mixed per layer (ρ by construction), octave weights `(1,t,t)` with `t = clamp(−0.9543·psd_slope − 0.7895, 0, 0.45)` fitted against the declared psd_slope of all six in-family profiles on the true gate sampling grid (CI-verified to 4 decimals), the full model's own one-step exact amplitude self-calibration, per-pixel σ(D) at pixel centres (identical on uniform patches — every §L gate; a documented approximation on real images), and the same k area-supersampling rule. Reachable spectrum band ≈ [−0.84, −1.4] of declared psd_slope at the gate scale; outside it the fast field returns the closest reachable spectrum, the label, and the exact export (classic-monochrome-400's declared −0.85 anchor is inside this gap — the full model also measures ≈ −0.98 for it — a documented M2 authoring artifact). Preview leg + stock thumbnails only — export and the CLI never set the flag.
 
 ## H. Finish / optional wear `[ART — default pristine]`
 
@@ -124,6 +125,7 @@ Fit targets: densitometric H&D sets → §D splines (monotonic least-squares); n
 | Algorithmic: tiled≡monolithic | byte/hash equality (CPU) | identical |
 | Algorithmic: threaded≡monolithic (A2.1) | byte equality, any worker count (chunks are strips) | identical |
 | Film-statistical: grain | RMS σ(D), PSD slope, layer ρ (grain.md §4) | ±10% / ±15% / ±0.05 vs profile declaration |
+| Film-statistical: grain fast path (A2.2) | SAME gates measured on the fast field, all bundled stocks included; byte-exact tiled≡mono / threaded≡mono / determinism | same tolerances — a fast approximation that misses the statistics is a bug, not a feature |
 | Film-statistical: halation | edge-spread radius on test impulse (mm film-plane) | within ±15% of declared kernel radius |
 | Stock-fidelity (only for `measured`/`reference-fitted`) | normalized H&D curve error; ΔE00 on chart patches under stated rendering conditions; human A/B protocol with licensed reference scans | declared per calibration report — **no arbitrary marketing thresholds** |
 

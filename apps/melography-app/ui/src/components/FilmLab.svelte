@@ -170,6 +170,10 @@
         />
       </label>
 
+      {#if $film.adjustments.grain_intensity > 0}
+        <p class="hint">{t("film.grainFast")}</p>
+      {/if}
+
       <label class="row checkbox">
         <input
           type="checkbox"

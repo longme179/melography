@@ -560,8 +560,10 @@ impl EditorState {
             .ok()?
             .with_adjustments(self.film.adjustments.clone(), self.film.lens)
             .ok()?;
+        // A2.2 — the preview leg renders grain through the fast
+        // approximation (UI-labelled); export and the CLI stay full-model.
         Some(render::FilmLeg {
-            params,
+            params: params.with_grain_fast(true),
             key: render::film_leg_key(&stock.id, &self.film.adjustments),
         })
     }
@@ -1203,7 +1205,9 @@ pub fn stock_thumbs(state: St, max_dim: u32) -> Result<Vec<StockThumbJson>, AppE
                     .ok()
             })
             .map(|params| render::FilmLeg {
-                params,
+                // A2.2 — thumbnails are preview-class renders: fast grain,
+                // same labelled approximation as the viewport.
+                params: params.with_grain_fast(true),
                 key: render::film_leg_key(&stock.id, &defaults),
             });
         let Some(leg) = leg else {
