@@ -14,7 +14,7 @@
 use melography_core::{Channels, ImageF32};
 use melography_film::chain::{render, render_threaded, FilmChainParams};
 use melography_film::emulsion::resolve_emulsion;
-use melography_film::grain::GrainField;
+use melography_film::grain::{FastGrain, GrainField};
 use melography_film::print::Print;
 use melography_film::Adjustments;
 use std::time::Instant;
@@ -68,6 +68,14 @@ fn perf_preview_and_export_budgets() {
             p.id,
             t.elapsed().as_secs_f64() * 1000.0
         );
+        let t = Instant::now();
+        let fast = FastGrain::resolve(p, 1.0, None);
+        let _ = fast.enabled;
+        println!(
+            "resolve-fast[{}]: {:.1} ms (A2.2 fast self-calibration)",
+            p.id,
+            t.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     // ── preview leg: 2048×1536 ───────────────────────────────────────────
@@ -112,6 +120,30 @@ fn perf_preview_and_export_budgets() {
         let p95 = times[times.len() - 1];
         println!(
             "preview-threaded-2048x1536[{}]: p50 {p50:.0} ms · p95 {p95:.0} ms (n={runs})",
+            p.id
+        );
+    }
+
+    // ── preview leg, fast grain (A2.2): same scenario, grain fast path ─
+    // Output is byte-identical across worker counts (chain tests assert
+    // it); this leg is the A2.2 speedup evidence for the PLAN §4 re-pin.
+    for p in &reg.profiles {
+        let params = FilmChainParams::new(p.clone())
+            .unwrap()
+            .with_grain_fast(true);
+        // warmup
+        let _ = render_threaded(&preview_img, &params, 0).unwrap();
+        let mut times = Vec::with_capacity(runs);
+        for _ in 0..runs {
+            let t = Instant::now();
+            let _ = render_threaded(&preview_img, &params, 0).unwrap();
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p50 = times[times.len() / 2];
+        let p95 = times[times.len() - 1];
+        println!(
+            "preview-fast-threaded-2048x1536[{}]: p50 {p50:.0} ms · p95 {p95:.0} ms (n={runs})",
             p.id
         );
     }

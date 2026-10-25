@@ -1,40 +1,51 @@
 # MELOGRAPHY — Agent State
 
-**Updated:** 2026-10-25 (session 16 — A1 merged (PR #35); A2.1 strip threading shipped, PR pending owner review; the session-15 `p.width=v.width` hotfix is a parallel PR) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
+**Updated:** 2026-10-25 (session 17 — A1 (PR #35), the session-15 hotfix (PR #36) and A2.1 strip threading (PR #37) are ALL MERGED; this session implements A2.2 grain fast path on `agent/m5a2-grain-fastpath`) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
 
 ## Current milestone
 
 **M5-A — Creative depth & preview speed** (session 13 restructure,
 owner-gated; full slice detail in PLAN §2 M5-A). **A1 (preview transport
-correctness, P0) is MERGED (PR #35).** **A2.1 (strip threading) is
-implemented on `agent/m5a2-strip-threading`** — `chain::render_threaded`
-chunks the image across `std::thread::scope` workers, byte-identical for
-any worker count (chunks are strips; §L gate extended), preview leg
-switched, export sequential, four new regression gates. **In parallel,
-session 15 (branch `agent/session15-viewport-unbound-canvas`) fixes the
-owner-reported `p.width=v.width` banner** — single blit path
-`ui/src/lib/blit.ts` + CI smoke gate; the two PRs touch disjoint files.
-A2.2–A5 remain.
+correctness, PR #35), the session-15 viewport hotfix (PR #36) and A2.1
+(strip threading, PR #37) are MERGED.** **A2.2 (grain fast path) is
+implemented on `agent/m5a2-grain-fastpath`** — `FastGrain` in
+`crates/film/src/grain.rs`: three octaves of correlated band-limited value
+noise on absolute film coordinates (Δ = 8/16/32 µm), weights
+`(1,t,t)` with `t = clamp(−0.8931·psd_slope − 0.6782, 0, 0.45)`,
+Cholesky layer mixing, the full model's own self-calibration and
+k-supersampling; §L gates apply unchanged (new fast gates: RMS, PSD
+incl. all bundled stocks, ρ, zoom, byte-exact tiling/threading,
+determinism); preview leg + stock thumbs opt in via
+`FilmChainParams::with_grain_fast(true)`, export/CLI stay full-model by
+construction; UI-labelled "grain (fast preview)" (EN/VI). Design and
+gate expectations were established in a bit-exact Python prototype
+outside the repo (`~/my-project/scripts/a22_*.py`). A2.3–A5 remain.
 
-## Session 16 delivered (this PR — A2.1 strip threading)
+## Session 17 delivered (this PR — A2.2 grain fast path)
 
-1. ✅ `chain::render_threaded(img, params, workers)` — contiguous
-   chunks, one `std::thread::scope` worker each; `workers: 0` = one per
-   logical core; no new dependencies; panics resume_unwind into the
-   caller
-2. ✅ Chunks are strips: the §L contract extends to any worker count —
-   gates: threaded≡mono (workers 2/3/4/8/16 + auto, real 128-row
-   chunks), tiny-image clamping, margin-heavy (veiling σ=40 mm, cap
-   engaged), `worker_cap` scratch invariant `h + n·2·m ≤ 2(h + 2·m)`
-3. ✅ The strip body extracted UNCHANGED into `render_strip` shared by
-   render / render_tiled / render_threaded; `ChainStages::resolve`
-   holds the once-per-render stages (plain data → Sync)
-4. ✅ Preview leg (`render_pipeline`) → `render_threaded(_, 0)`;
-   export keeps the sequential CLI path (R-REN-2, memory-budget suites
-   untouched)
-5. ✅ perf harness gains `preview-threaded-2048x1536` (ignored,
-   release-run evidence for the §4 re-pin on the owner's machine);
-   FILM_MODEL §L gains the threaded≡monolithic row
+1. ✅ `FastGrain` (grain.rs): tent-interpolated value noise, 3 octaves
+   incommensurate with the 6 µm gate grid (commensurate ratios lock the
+   sample phase and punch spectral holes — measured, that is how the
+   octave set was chosen); ±√3 uniform node marks (unit variance, no
+   Box–Muller cost), Cholesky-mixed per layer ⇒ ρ by construction
+2. ✅ Amplitude self-calibration through the exact kernel (same
+   320²@6 µm/8×8 statistic as the full model) — one-step exact by
+   linearity; per-pixel σ(D) at pixel centres (documented approximation;
+   identical on uniform patches = every §L gate)
+3. ✅ `GrainStage` enum dispatch in `chain.rs`; `FilmChainParams.grain_fast`
+   + `with_grain_fast()`; fast margin_px = 0 (no neighbour rows read)
+4. ✅ Preview wiring: `EditorState::film_leg()` + `stock_thumbs` set the
+   flag (render cache key unchanged — the flag is a renderer property,
+   constant for every preview render); export path
+   (`export.rs` → `cmd_film_apply` → CLI) never sets it
+5. ✅ Gates: fast RMS (0.3/1.0/1.6), fast PSD (test profile −0.832 vs
+   −0.869, 4.2 %), all-bundled-stocks PSD (worst 9 %, tol 15 %), ρ,
+   zoom, chain determinism hash, fast tiled≡mono + threaded≡mono byte
+   gates, fast≠full honest-label test; perf legs
+   `resolve-fast` + `preview-fast-threaded-2048x1536` (release-ignored,
+   the §4 re-pin evidence for the owner's machine)
+6. ✅ UI label "grain (fast preview)" in FilmLab (EN/VI); PLAN A2.2
+   progress; FILM_MODEL §G/§L updated; session log 17
 
 ## Session 14 delivered (PR #35 — A1, merged)
 
@@ -80,20 +91,16 @@ resumes.
 
 ## Next five atomic actions
 
-1. Owner reviews **PR #36 (session-15 hotfix)** and **PR #37 (A2.1)** —
-   disjoint files, any merge order (STATE/PLAN may need a trivial
-   rebase whichever lands second)
+1. Owner reviews **PR #38 (A2.2 grain fast path)** — CI is the Rust
+   verifier (sandbox has no cargo)
 2. Owner runs the perf evidence on real hardware:
    `cargo test --release -p melography-film --test perf -- --ignored
-   --nocapture` → compare `preview-2048x1536` vs
-   `preview-threaded-2048x1536` p50/p95 → re-pin PLAN §4
-3. A2.2 grain fast path (FILM_MODEL §G approximation; §L statistical
-   gates apply unchanged); A2.3 GPU spatial kernels after re-measuring
-3. A3 Tier-1a camera-log→Rec709 baker (ARRI LogC3/LogC4, S-Log3, V-Log,
+   --nocapture` → compare `preview-threaded-2048x1536` vs
+   `preview-fast-threaded-2048x1536` p50/p95 → re-pin PLAN §4
+3. A2.3 GPU spatial kernels (WGSL grain gather + halation, the
+   `film_pixel` parity-harness pattern) after the §4 re-measure
+4. A3 Tier-1a camera-log→Rec709 baker (ARRI LogC3/LogC4, S-Log3, V-Log,
    CLog3, F-Log from published transfer functions; golden vectors;
    vendor LUTs dev-time-only, never bundled)
-4. Owner-device probes once A1 lands: preview p50/p95 at bounded maxDim
-   on the Fedora 44 machine → re-pin §4 with real numbers (known
-   trade-off to watch: no-film viewport resize re-renders once)
 5. Pat David license verification (patdavid.org) before any Tier-2
    bundling — never bundle unverified terms (risk #11)

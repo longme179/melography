@@ -438,3 +438,171 @@ fn gate_zoom_consistency_aperture_sigma() {
         );
     }
 }
+
+// ── A2.2: the fast path (§L gates apply UNCHANGED — FILM_MODEL §G) ─────────
+//
+// The same thresholds as the full-model gates above, measured on the fast
+// field. Expected values (deterministic, from the A2.2 design prototype —
+// seed 99, the same convention as the full gates): test profile slope
+// −0.832 vs declared −0.869 (4.2 %), RMS within ±4 %, zoom within ±4 %,
+// ρ within 0.004; bundled stocks' worst slope error 9 % (monochrome).
+
+#[test]
+#[ignore = "heavy statistical gate — run in release: cargo test --release -- --ignored"]
+fn gate_fast_grain_rms_within_10_percent_of_sigma_curve() {
+    use melography_film::grain::FastGrain;
+    let p = test_profile();
+    for &d in &[0.3, 1.0, 1.6] {
+        let f = FastGrain::resolve(&p, 1.0, Some(99));
+        let src = uniform_density(NATIVE_W, NATIVE_H, d);
+        let mut out = Plane::new(NATIVE_W, NATIVE_H);
+        f.apply(&src, &mut out, 0, NATIVE_H, &native_frame(), 0, NATIVE_H);
+        let measured = aperture_sigma(&out, 8, 1);
+        let target = p.grain.sigma_at(d);
+        let tol = if d >= 0.6 { 0.10 } else { 0.20 };
+        for (c, &m) in measured.iter().enumerate() {
+            let rel = (m - target) / target;
+            assert!(
+                rel.abs() <= tol,
+                "density {d} layer {c}: aperture σ {m:.5} vs target {target:.5} (rel {rel:+.4}, tol {tol})"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "heavy statistical gate — run in release: cargo test --release -- --ignored"]
+fn gate_fast_grain_psd_slope_within_15_percent() {
+    use melography_film::grain::FastGrain;
+    let p = test_profile();
+    let f = FastGrain::resolve(&p, 1.0, Some(99));
+    let src = uniform_density(NATIVE_W, NATIVE_H, 1.0);
+    let mut out = Plane::new(NATIVE_W, NATIVE_H);
+    f.apply(&src, &mut out, 0, NATIVE_H, &native_frame(), 0, NATIVE_H);
+    let mmpp = native_frame().mm_per_pixel;
+    let slope = psd_slope(&out, 1, mmpp); // green layer
+    let declared = p.grain.psd_slope;
+    let rel = (slope - declared) / declared;
+    assert!(
+        rel.abs() <= 0.15,
+        "PSD slope {slope:.3} vs declared {declared:.3} (rel {rel:+.4})"
+    );
+}
+
+#[test]
+#[ignore = "heavy statistical gate — run in release: cargo test --release -- --ignored"]
+fn gate_fast_grain_psd_slope_all_bundled_stocks() {
+    use melography_film::grain::FastGrain;
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let reg = melography_presets::StockRegistry::open(&root.join("profiles")).unwrap();
+    assert!(!reg.profiles.is_empty(), "bundled profiles must load");
+    for p in &reg.profiles {
+        let f = FastGrain::resolve(p, 1.0, Some(99));
+        let src = uniform_density(NATIVE_W, NATIVE_H, 1.0);
+        let mut out = Plane::new(NATIVE_W, NATIVE_H);
+        f.apply(&src, &mut out, 0, NATIVE_H, &native_frame(), 0, NATIVE_H);
+        let mmpp = native_frame().mm_per_pixel;
+        let slope = psd_slope(&out, 1, mmpp);
+        let declared = p.grain.psd_slope;
+        let rel = (slope - declared) / declared;
+        assert!(
+            rel.abs() <= 0.15,
+            "{}: fast PSD slope {slope:.3} vs declared {declared:.3} (rel {rel:+.4})",
+            p.id
+        );
+    }
+}
+
+#[test]
+fn gate_fast_grain_layer_rho_within_005() {
+    use melography_film::grain::FastGrain;
+    // ρ is a per-field property — scale-free; measured at a modest scale.
+    let p = test_profile();
+    let f = FastGrain::resolve(&p, 1.0, Some(99));
+    let (w, h) = (600u32, 400u32);
+    let frame = FilmFrame::from_dims(w, h, CropRule::FitWidth);
+    let src = uniform_density(w, h, 1.0);
+    let mut out = Plane::new(w, h);
+    f.apply(&src, &mut out, 0, h, &frame, 0, h);
+    for (a, b) in [(0usize, 1usize), (0, 2), (1, 2)] {
+        let measured = layer_rho(&out, a, b);
+        let declared = p.grain.rho.0[3 * a + b];
+        assert!(
+            (measured - declared).abs() <= 0.05,
+            "ρ({a},{b}): measured {measured:.3} vs declared {declared:.3}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "heavy statistical gate — run in release: cargo test --release -- --ignored"]
+fn gate_fast_zoom_consistency_aperture_sigma() {
+    use melography_film::grain::FastGrain;
+    // grain.md §3: a half-resolution preview samples the same continuous
+    // field; the matched physical aperture (24 µm here — 4 px @6 µm vs
+    // 2 px @12 µm) σ must agree within ±10 %.
+    let p = test_profile();
+    let f = FastGrain::resolve(&p, 1.0, Some(99));
+    let f_full = native_frame();
+    let f_half = FilmFrame::from_dims(NATIVE_W / 2, NATIVE_H / 2, CropRule::FitWidth);
+    let src_full = uniform_density(NATIVE_W, NATIVE_H, 1.0);
+    let mut out_full = Plane::new(NATIVE_W, NATIVE_H);
+    f.apply(&src_full, &mut out_full, 0, NATIVE_H, &f_full, 0, NATIVE_H);
+    let src_half = uniform_density(NATIVE_W / 2, NATIVE_H / 2, 1.0);
+    let mut out_half = Plane::new(NATIVE_W / 2, NATIVE_H / 2);
+    f.apply(
+        &src_half,
+        &mut out_half,
+        0,
+        NATIVE_H / 2,
+        &f_half,
+        0,
+        NATIVE_H / 2,
+    );
+    let s_full = aperture_sigma(&out_full, 4, 1);
+    let s_half = aperture_sigma(&out_half, 2, 1);
+    for c in 0..3 {
+        let rel = (s_half[c] - s_full[c]) / s_full[c];
+        assert!(
+            rel.abs() <= 0.10,
+            "fast zoom consistency layer {c}: σ_half {:.5} vs σ_full {:.5} (rel {rel:+.4})",
+            s_half[c],
+            s_full[c]
+        );
+    }
+}
+
+#[test]
+fn gate_fast_render_determinism_full_chain_hash() {
+    use melography_film::chain::{render, FilmChainParams};
+    use sha2::{Digest, Sha256};
+
+    let mut img = ImageF32::alloc(128, 96, Channels::Rgb, 0.0);
+    for y in 0..96 {
+        for x in 0..128 {
+            let v = 0.1 + 0.6 * (f64::from(x) / 128.0) * (f64::from(y) / 96.0);
+            let p = img.pixel_mut(x, y);
+            p[0] = v as f32;
+            p[1] = (v * 0.9) as f32;
+            p[2] = (v * 1.1) as f32;
+        }
+    }
+    let params = FilmChainParams::new(test_profile())
+        .unwrap()
+        .with(Adjustments {
+            grain_seed: Some(2026),
+            ..Adjustments::default()
+        })
+        .unwrap()
+        .with_grain_fast(true);
+    let a = render(&img, &params).unwrap();
+    let b = render(&img, &params).unwrap();
+    assert_eq!(
+        Sha256::digest(a.as_bytes()),
+        Sha256::digest(b.as_bytes()),
+        "same-seed fast renders must hash identically"
+    );
+}

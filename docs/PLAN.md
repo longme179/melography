@@ -175,6 +175,40 @@ propagation: a failing worker resumes its panic in the caller
 a `preview-threaded-2048x1536` leg (ignored, release-run — the honest
 re-measure for the §4 re-pin happens on the owner's machine).
 
+**Progress (session 17, A2.2 — grain fast path):** shipped.
+`FastGrain` (crates/film/src/grain.rs) implements FILM_MODEL §G's
+"interactive fast path" as correlated band-limited value noise on
+absolute film coordinates: three tent-interpolation octaves
+(Δ = 8/16/32 µm — chosen incommensurate with the 6 µm gate grid;
+commensurate ratios lock the sample phase and punch holes in the
+measured spectrum), ±√3 uniform node marks (zero mean, unit variance —
+Gaussian second-order statistics at a fraction of the hash cost),
+Cholesky-mixed per layer ⇒ ρ by construction; octave weights
+`(1,t,t)/|·|` with `t = clamp(−0.8931·psd_slope − 0.6782, 0, 0.45)`
+fitted in a bit-exact Python design prototype (repo-external,
+`~/my-project/scripts/a22_*.py`) against the declared psd_slope of all
+six in-family profiles; amplitude self-calibration through the exact
+kernel (the full model's own 320²@6 µm/8×8 statistic — one-step exact
+by linearity); per-pixel σ(D) at pixel centres (identical on uniform
+patches = every §L gate; a documented approximation on real images);
+the same k supersampling rule as the full model. The §L gates apply
+UNCHANGED (the spec's own words — "a fast approximation that misses
+the statistics is a bug, not a feature"): new fast gates measure RMS
+(0.3/1.0/1.6 — within ±4 %), PSD (test profile −0.832 vs −0.869
+declared, 4.2 %; all five bundled stocks within 9 %, tol 15 %), layer
+ρ (exact by construction), zoom consistency (within ±4 %), plus
+byte-exact fast tiled≡mono / threaded≡mono / determinism gates.
+Wiring: preview leg + stock thumbs opt in via
+`FilmChainParams::with_grain_fast(true)` (render cache key unchanged —
+the flag is a renderer property); export (app `export.rs` → CLI) and
+the CLI never set it, so the reference path stays the full model by
+construction. UI label "grain (fast preview)" (EN/VI) in FilmLab.
+Honest reachability note: the family covers declared psd_slope
+≈ [−0.75, −1.5]; out-of-family authored profiles get the closest
+reachable spectrum, the label, and the exact export. Perf legs added
+(`resolve-fast`, `preview-fast-threaded-2048x1536`) — the §4 re-pin
+re-measure happens on the owner's machine, as with A2.1.
+
 **A2 · Film-chain preview speed (the measured 3.4–4.4 s vs ≤ 50 ms / 400 ms
 budget — executing the M2 §5 plan in spec order).**
 1. **Strip threading** — embarrassingly parallel; the tiled≡mono gate already

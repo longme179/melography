@@ -41,7 +41,7 @@
 
 use crate::emulsion::{self, Adjustments, Emulsion};
 use crate::frame::FilmFrame;
-use crate::grain::GrainField;
+use crate::grain::GrainStage;
 use crate::optics::{self, GaussianKernel, LensParams, Plane};
 use crate::print::Print;
 use crate::profile::StockProfile;
@@ -61,6 +61,10 @@ pub struct FilmChainParams {
     pub profile: StockProfile,
     pub adjustments: Adjustments,
     pub lens: LensParams,
+    /// A2.2 — render the grain stage through the fast approximation
+    /// (FILM_MODEL §G "interactive fast path"). Preview-only: export and
+    /// the CLI never set it, so the §L reference path is the full model.
+    pub grain_fast: bool,
 }
 
 impl FilmChainParams {
@@ -72,6 +76,7 @@ impl FilmChainParams {
             profile,
             adjustments: Adjustments::default(),
             lens: LensParams::default(),
+            grain_fast: false,
         };
         p.validate()?;
         Ok(p)
@@ -93,6 +98,12 @@ impl FilmChainParams {
         self.lens = lens;
         self.validate()?;
         Ok(self)
+    }
+
+    /// A2.2 — select the grain fast path (preview leg only).
+    pub fn with_grain_fast(mut self, fast: bool) -> Self {
+        self.grain_fast = fast;
+        self
     }
 
     pub fn validate(&self) -> Result<(), ChainError> {
@@ -258,7 +269,7 @@ struct ChainStages {
     frame: FilmFrame,
     lens: LensParams,
     em: Emulsion,
-    grain: GrainField,
+    grain: GrainStage,
     print: Print,
     veiling: GaussianKernel,
     veiling_on: bool,
@@ -277,10 +288,11 @@ impl ChainStages {
         let mmpp = frame.mm_per_pixel;
 
         let em: Emulsion = emulsion::resolve_emulsion(&params.profile, &params.adjustments, mmpp);
-        let grain = GrainField::resolve(
+        let grain = GrainStage::resolve(
             &params.profile,
             params.adjustments.grain_intensity,
             params.adjustments.grain_seed,
+            params.grain_fast,
         );
         let print = Print::resolve(
             &params.profile,
@@ -678,5 +690,64 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ── A2.2: the fast grain path through the executors ────────────────────────
+
+    /// The §L contract extends to the fast field: any strip partition (tiled
+    /// or threaded) reproduces the fast monolithic bytes exactly.
+    #[test]
+    fn fast_tiled_equals_monolithic_bytes() {
+        let img = synthetic_photo(96, 64);
+        let p = params().with_grain_fast(true);
+        let mono = render(&img, &p).unwrap();
+        for strip in [1u32, 3, 7, 16, 64] {
+            let tiled = render_tiled(&img, &p, strip).unwrap();
+            assert_eq!(
+                mono.data(),
+                tiled.data(),
+                "strip_h={strip}: fast tiled render differs from fast monolithic"
+            );
+        }
+    }
+
+    #[test]
+    fn fast_threaded_equals_monolithic_bytes() {
+        let img = synthetic_photo(96, 512);
+        let p = params().with_grain_fast(true);
+        let mono = render(&img, &p).unwrap();
+        for workers in [2u32, 3, 4, 8] {
+            let out = render_threaded(&img, &p, workers).unwrap();
+            assert_eq!(
+                mono.data(),
+                out.data(),
+                "workers={workers}: fast threaded render differs from fast monolithic"
+            );
+        }
+        let auto = render_threaded(&img, &p, 0).unwrap();
+        assert_eq!(mono.data(), auto.data(), "auto workers differ (fast)");
+    }
+
+    /// Fast and full renders are different realizations (the label is honest),
+    /// and both are deterministic — the preview/export split never mixes bytes.
+    #[test]
+    fn fast_differs_from_full_but_both_deterministic() {
+        let img = synthetic_photo(96, 64);
+        let pf = params();
+        let pfast = params().with_grain_fast(true);
+        let full_a = render(&img, &pf).unwrap();
+        let full_b = render(&img, &pf).unwrap();
+        let fast_a = render(&img, &pfast).unwrap();
+        let fast_b = render(&img, &pfast).unwrap();
+        assert_eq!(full_a.data(), full_b.data(), "full must be deterministic");
+        assert_eq!(fast_a.data(), fast_b.data(), "fast must be deterministic");
+        let differing = (0..full_a.data().len())
+            .filter(|&i| full_a.data()[i] != fast_a.data()[i])
+            .count();
+        assert!(
+            differing > full_a.data().len() / 4,
+            "fast and full must differ ({differing}/{})",
+            full_a.data().len()
+        );
     }
 }
