@@ -174,6 +174,11 @@ pub fn render_threaded(
     let (w, h) = (img.width(), img.height());
     let st = ChainStages::resolve(params, w, h);
     let m_total = st.m_total();
+    // Shared read-only across workers: bind the reference so the move
+    // closures below capture `&ChainStages` (Copy), not the struct by
+    // value (E0382 otherwise — a `move ||` that writes `&st` captures
+    // `st` itself).
+    let st = &st;
 
     let requested = if workers == 0 {
         std::thread::available_parallelism().map_or(1, |n| n.get() as u32)
@@ -187,7 +192,7 @@ pub fn render_threaded(
         // One chunk = the whole image: the exact monolithic render.
         let buf_rows = (h + 2 * m_total).clamp(1, h);
         let mut planes = StripPlanes::new(w, buf_rows);
-        render_strip(img, &st, &mut planes, 0, h, out_img.data_mut(), 0);
+        render_strip(img, st, &mut planes, 0, h, out_img.data_mut(), 0);
         return Ok(out_img);
     }
 
@@ -218,7 +223,7 @@ pub fn render_threaded(
             handles.push(scope.spawn(move || {
                 let buf_rows = (y1 - y0 + 2 * m_total).clamp(1, h);
                 let mut planes = StripPlanes::new(w, buf_rows);
-                render_strip(img, &st, &mut planes, y0, y1, out, y0);
+                render_strip(img, st, &mut planes, y0, y1, out, y0);
             }));
         }
         // A panicking worker resumes its panic in the caller — the same
@@ -402,14 +407,7 @@ fn render_strip(
     }
 
     // -- Excitation C1/C3 + A (EV, pre-desat) over r2 (in-place) -----------
-    emulsion::apply_excitation_inplace(
-        plane_a,
-        r2.lo(y3),
-        r2.hi(y3),
-        em,
-        st.ev,
-        st.pre_desaturate,
-    );
+    emulsion::apply_excitation_inplace(plane_a, r2.lo(y3), r2.hi(y3), em, st.ev, st.pre_desaturate);
 
     // -- Halation C2 over r1 (reads the r2 window) → plane_b ---------------
     emulsion::apply_halation(
