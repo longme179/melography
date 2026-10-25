@@ -29,9 +29,34 @@ What we studied from public repository structure and documentation (not code):
 
 - Dehancer (film emulation plugin ecosystem) proves paying demand for *physical-model* film emulation with grain/halation/bloom controls; their feature list (film profiles, grain, halation, bloom, gates, licenses per-host) maps almost 1:1 onto our stage list — a validation of scope, and a reminder to differentiate on: offline privacy, price (free/open), EN+VI, and open profile format.
 
-## 6. Differentiation summary (what MELOGRAPHY must not lose)
+## 6. lightcraft (`storytold/lightcraft`, Apache-2.0 OR MIT dual, alpha, added session 13)
+
+Pure-Rust non-destructive raw developer + photo editor (native desktop via
+wgpu; WASM browser build). Closest *engineering* comparable so far — and the
+first whose license (Apache-2.0/MIT, both GPL-compatible) permits code-level
+reuse with attribution, per ADR-0003 vetting.
+
+- **Studied from public repo/docs (and later, where useful, code — license
+  permits it):** entire develop pipeline as wgpu compute kernels (Metal/
+  Vulkan/DX12) with CPU fallback "exact within 1/255"; **public claim of
+  ~4 ms slider re-render on 24 MP (Apple M4 Pro)** — the existence proof
+  that our preview p50 budget is reachable once spatial stages move to
+  GPU; background worker pool renders loupe/before-after/thumbnails off
+  the UI thread; command-based UI with stable IDs (everything undo-able);
+  41 hand-built presets with an **Amount slider (0–200 %)** — the same
+  semantics as our LUT intensity, worth extending to stock profiles.
+- **Pipeline contrast:** scene-referred Rec.2020-float internal, OkLCh
+  color mixer, filmic shoulder; **no LUT support, no film emulation** —
+  confirmed as our differentiation, not a gap to copy.
+- **Caution:** alpha breadth (82 % by feature count, 61 % as a day-to-day
+  tool) — the solo-maintainer scope-creep lesson (§1 RapidRAW) applies;
+  we borrow patterns, not their roadmap.
+
+## 7. Differentiation summary (what MELOGRAPHY must not lose)
 
 1. Offline-first, local-only, no accounts (vs. cloud-tethered competitors).
 2. Editable, *explainable* film model (physical stages user can reorder within guardrails) vs. black-box presets.
 3. Honest provenance labels (`measured` / `reference-fitted` / `artist-authored` / `experimental`) on every stock profile.
 4. User LUTs as composable first-class citizens, not an afterthought import.
+5. Bundled, license-clean LUT library (camera-log→Rec709 technicals + our
+   own print-stage looks) — lightcraft ships none; most rivals ship none.
