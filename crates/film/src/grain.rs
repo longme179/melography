@@ -482,7 +482,7 @@ impl GrainField {
 const FAST_DELTAS_MM: [f64; 3] = [0.008, 0.016, 0.032];
 /// Hash tag separating the fast node stream from the full model's cells
 /// (the two paths must give different fields at the same seed).
-const FAST_TAG: u32 = 0xFA5_7;
+const FAST_TAG: u32 = 0xFA57;
 /// √3 — scale of the uniform node marks (variance 1).
 /// Literal (not `core::f64::consts::SQRT_3`): that constant is unstable
 /// (`more_float_constants`); this decimal round-trips to the identical
@@ -547,7 +547,6 @@ pub struct FastGrain {
     /// Cholesky factor of the layer correlation matrix (row-major 3×3).
     chol: [f64; 9],
     seed: u32,
-    layers: LayerLayout,
     /// 3 (colour) or 1 (monochrome, replicated to all layers).
     rows: usize,
     sigma_curve: SigmaCurve,
@@ -571,7 +570,6 @@ impl FastGrain {
             weights,
             chol: cholesky3(&g.rho),
             seed: seed.unwrap_or(g.seed),
-            layers: profile.layers,
             rows: if profile.layers == LayerLayout::Color {
                 3
             } else {
@@ -677,7 +675,11 @@ impl FastGrain {
                 let u = sx as f64 * spacing;
                 let f = self.eval_at(&grids, u, v);
                 let i = sy * n + sx;
-                field[i] = [f[0] * sigma, f[1] * sigma, f[2] * sigma];
+                field[i] = [
+                    f[0] * sigma * self.a_norm[0],
+                    f[1] * sigma * self.a_norm[1],
+                    f[2] * sigma * self.a_norm[2],
+                ];
             }
         }
         // Aperture box statistics (identical to the full model's loop).
