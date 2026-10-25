@@ -484,7 +484,11 @@ const FAST_DELTAS_MM: [f64; 3] = [0.008, 0.016, 0.032];
 /// (the two paths must give different fields at the same seed).
 const FAST_TAG: u32 = 0xFA5_7;
 /// √3 — scale of the uniform node marks (variance 1).
-const SQRT3: f64 = core::f64::consts::SQRT_3;
+/// Literal (not `core::f64::consts::SQRT_3`): that constant is unstable
+/// (`more_float_constants`); this decimal round-trips to the identical
+/// f64 (verified against Python's `math.sqrt(3.0)` in the design
+/// prototype), so the ported statistics are unaffected.
+const SQRT3: f64 = 1.732_050_807_568_877_2;
 
 /// Coarse-octave weight from the declared PSD slope (A2.2 design
 /// prototype; clamped to the family's reachable range).
@@ -749,7 +753,14 @@ impl FastGrain {
             .iter()
             .enumerate()
             .map(|(m, &delta)| {
-                FastNodes::build(self, m, u_lo - delta, u_hi + delta, v_lo - delta, v_hi + delta)
+                FastNodes::build(
+                    self,
+                    m,
+                    u_lo - delta,
+                    u_hi + delta,
+                    v_lo - delta,
+                    v_hi + delta,
+                )
             })
             .collect();
         for y in y0..y1 {
@@ -1090,7 +1101,10 @@ mod tests {
                 differing += 1;
             }
         }
-        assert!(nonzero_1 > 512, "fast field must be non-trivial ({nonzero_1})");
+        assert!(
+            nonzero_1 > 512,
+            "fast field must be non-trivial ({nonzero_1})"
+        );
         assert!(
             differing > (w as usize * h as usize),
             "different seed must give a different field ({differing}/{}",
