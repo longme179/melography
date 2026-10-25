@@ -16,7 +16,11 @@ export interface PreviewFrame {
   height: number;
   renderMs: number;
   clamped: number;
-  rgba: Uint8ClampedArray;
+  // TS 5.7+ typed-array generics: parseFrame builds this from a real
+  // ArrayBuffer, and the precise generic is what lib.dom's ImageData
+  // constructor accepts (blit.ts) — a plain `Uint8ClampedArray` default
+  // (ArrayBufferLike) no longer typechecks through that call.
+  rgba: Uint8ClampedArray<ArrayBuffer>;
 }
 
 export interface ImageInfo {

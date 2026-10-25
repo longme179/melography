@@ -282,6 +282,8 @@ jobs:
         run: node scripts/ui_i18n_audit.mjs
       - name: UI WCAG contrast audit (#15 — AA computed from app.css tokens, all 3 themes)
         run: node scripts/ui_contrast_audit.mjs
+      - name: UI blit smoke (session 15 — unbound-canvas TypeError regression + single blit-path scan)
+        run: node scripts/ui_blit_smoke.mjs
       - name: UI pseudo-locale build (#15 — UX_SPEC §10; catalogs accented + 40% padded)
         run: npm --prefix apps/melography-app/ui run build:pseudo
       - name: App fmt + clippy (gui features)

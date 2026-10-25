@@ -101,6 +101,34 @@ Known trade-off: a viewport-size change with no film leg re-renders once
 ≥35 MP sources gain caching they never had (bounded artifact fits budgets
 the full-res render blew). Evidence: PR #35.
 
+**Progress (session 15 — A1 hotfix, the `p.width=v.width` banner):** the
+owner reported "Something needs attention; undefined is not an object
+(evaluating 'p.width=v.width')" firing constantly post-A1. Verified
+against the minified production bundle: `p.width=v.width` =
+Viewport.blit()'s `originalCanvas.width = original.width` — the compare
+canvas is `bind:this`-bound only while its `{#if $compareOn && original}`
+block is mounted, but blit() touched it whenever an `original` frame
+existed, so EVERY render pass with compare off (the default) threw a
+TypeError into the error banner after the edited image had already
+drawn (hence "preview works, banner spams"). Fix: all canvas pixel
+writes now go through the single path `ui/src/lib/blit.ts`
+(`putRgba`/`blitFrame`), where an unbound canvas / missing frame /
+degenerate dims / truncated buffer are typed no-ops that leave previous
+pixels untouched; the compare canvas mounts whenever an `original`
+frame EXISTS and is CSS-hidden while compare is off (element lifecycle
+= data lifecycle — toggling compare now shows the already-drawn
+original instantly instead of a blank half); stale frames dropped when
+the image closes (window-resize-after-close could layout an unmounted
+canvas); failed passes only banner while an image is open (close-mid-
+render no longer pops the home-screen banner). Regression gate:
+`scripts/ui_blit_smoke.mjs` in CI — runs the REAL blit.ts (compiled
+with the workspace esbuild) against stub DOM elements (unbound canvas
+= the exact crash) + a single-blit-path scan forbidding direct
+canvas `.width/.height` assignment outside blit.ts. TS 5.7+
+typed-array generics made explicit (`PreviewFrame.rgba:
+Uint8ClampedArray<ArrayBuffer>`) — the old code typechecked only
+because tsc never looked inside .svelte files. Evidence: PR #36.
+
 **A1 · Preview transport correctness (P0 — the "Film Lab not good yet" bug).**
 Diagnosis verified against `main` @ 5f2d34f (three real defects, not guesses):
 1. `FilmLab.svelte` invokes `render_preview` with `maxDim: 0`; in
