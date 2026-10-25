@@ -12,7 +12,7 @@
 //!   grain self-calibration (per parameter change, cached in the app).
 
 use melography_core::{Channels, ImageF32};
-use melography_film::chain::{render, FilmChainParams};
+use melography_film::chain::{render, render_threaded, FilmChainParams};
 use melography_film::emulsion::resolve_emulsion;
 use melography_film::grain::GrainField;
 use melography_film::print::Print;
@@ -88,6 +88,30 @@ fn perf_preview_and_export_budgets() {
         let p95 = times[times.len() - 1];
         println!(
             "preview-2048x1536[{}]: p50 {p50:.0} ms · p95 {p95:.0} ms (n={runs})",
+            p.id
+        );
+    }
+
+    // ── preview leg, threaded (A2.1): same scenario via render_threaded ─
+    // Output is byte-identical to the sequential leg (the chain tests
+    // assert it); this leg is the speedup evidence for the PLAN §4
+    // re-pin. workers=0 → one chunk per logical core (the count printed
+    // in the machine line above).
+    for p in &reg.profiles {
+        let params = FilmChainParams::new(p.clone()).unwrap();
+        // warmup
+        let _ = render_threaded(&preview_img, &params, 0).unwrap();
+        let mut times = Vec::with_capacity(runs);
+        for _ in 0..runs {
+            let t = Instant::now();
+            let _ = render_threaded(&preview_img, &params, 0).unwrap();
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p50 = times[times.len() / 2];
+        let p95 = times[times.len() - 1];
+        println!(
+            "preview-threaded-2048x1536[{}]: p50 {p50:.0} ms · p95 {p95:.0} ms (n={runs})",
             p.id
         );
     }

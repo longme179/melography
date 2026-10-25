@@ -122,6 +122,7 @@ Fit targets: densitometric H&D sets → §D splines (monotonic least-squares); n
 | Algorithmic: curve monotonicity/edges | property tests + NaN scan | zero violations, all profiles |
 | Algorithmic: determinism (G) | same seed → identical render | bit-exact CPU |
 | Algorithmic: tiled≡monolithic | byte/hash equality (CPU) | identical |
+| Algorithmic: threaded≡monolithic (A2.1) | byte equality, any worker count (chunks are strips) | identical |
 | Film-statistical: grain | RMS σ(D), PSD slope, layer ρ (grain.md §4) | ±10% / ±15% / ±0.05 vs profile declaration |
 | Film-statistical: halation | edge-spread radius on test impulse (mm film-plane) | within ±15% of declared kernel radius |
 | Stock-fidelity (only for `measured`/`reference-fitted`) | normalized H&D curve error; ΔE00 on chart patches under stated rendering conditions; human A/B protocol with licensed reference scans | declared per calibration report — **no arbitrary marketing thresholds** |
