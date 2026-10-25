@@ -295,6 +295,51 @@ jobs:
       - name: App supply chain (cargo-deny on the app's own lockfile)
         run: cd apps/melography-app && cargo deny --config ../../deny.toml check
 
+  # ── Session 11: app BUNDLE smoke — the gate that was missing when two
+  #    packaging-layer bugs shipped green (PR #31's hook/frontendDist paths
+  #    and the stock registry never being bundled). CI never ran
+  #    `tauri build` before, so the exact layer users install was
+  #    untested. This job builds the real .deb and asserts its content:
+  #    the binary, the embedded frontend, and the bundled stock registry. ──
+  app-bundle:
+    name: App bundle smoke (ubuntu, deb)
+    needs: app-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Activate pinned toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain
+      - name: Install tauri linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev file dpkg
+      - name: UI install (pinned @tauri-apps/cli — the build scripts' flow)
+        run: npm --prefix apps/melography-app/ui ci
+      - name: tauri build (deb bundle, unsigned local artifact)
+        run: |
+          cd apps/melography-app
+          export PATH="$PWD/ui/node_modules/.bin:$PATH"
+          tauri build --bundles deb
+      - name: Assert the stock registry ships in the bundle
+        run: |
+          # session 11 regression: a film editor with no film stocks is
+          # "not functional" — the .deb MUST carry profiles/*.json.
+          deb=$(ls apps/melography-app/target/release/bundle/deb/*.deb)
+          echo "bundle: $deb"
+          dpkg-deb -c "$deb" > /tmp/deb-contents.txt
+          stocks=$(grep -cE 'profiles/[a-z0-9-]+\.json' /tmp/deb-contents.txt || true)
+          echo "stock profiles in deb: $stocks (expect >= 5)"
+          [ "$stocks" -ge 5 ]
+          grep -E 'usr/bin/' /tmp/deb-contents.txt | head -5
+      - name: Upload the unsigned .deb (owner smoke-testing only)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: melography-unsigned-deb
+          path: apps/melography-app/target/release/bundle/deb/*.deb
+          retention-days: 7
+
   # ── Spike S4: updater dummy-channel roundtrip (standalone crate, no gate) ──
   # tauri on Linux needs the webkit system stack at BUILD time even with the
   # mock runtime (muda/gtk + tauri-runtime link webkit2gtk).

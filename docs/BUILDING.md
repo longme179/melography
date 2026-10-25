@@ -22,6 +22,24 @@ from `apps/melography-app`: from the repo root the CLI cannot see
 `ui/package.json` within its search depth and falls back to the wrong
 frontend dir (first symptom: `npm error path …/ui/ui/package.json`).
 
+## Bundled data — the stock registry ships with the app
+
+`tauri.conf.json > bundle.resources` maps the repo's `profiles/` (the five
+shipped film stocks) into every installer (`deb`, `rpm`, `AppImage`, `dmg`,
+`exe`) under `profiles/`. At startup the app resolves the registry in this
+order (first hit wins, `lib.rs > resolve_stocks_root`):
+
+1. `$MELOGRAPHY_PROFILES` (explicit override — tests, power users);
+2. checkout-relative `profiles/` (dev + `--bin-only` run from a checkout);
+3. the installer's **resource dir** (installed apps — deb/rpm install under
+   `/usr/lib/melography/`, AppImage resolves inside its own mount);
+4. `~/.melography/profiles` (last resort, CLI parity).
+
+If none yields stocks, the Film Lab shows an honest empty state naming the
+path it looked in — never a silently empty feature. `--bin-only` builds
+have no resource dir: run them from `apps/melography-app` (or a checkout)
+so the relative probe hits, or set `MELOGRAPHY_PROFILES`.
+
 ## Linux — `scripts/build/build-linux.sh`
 
 Supports the three distro families CI and the README cover: **Ubuntu/Debian**

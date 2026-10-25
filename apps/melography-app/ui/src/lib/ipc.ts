@@ -71,6 +71,11 @@ export interface AppState {
   missingStock: string | null;
   /** Absolute path of the open original (S6 add-to-batch). */
   sourcePath: string | null;
+  /** Where the stock registry was resolved from + how many stocks it
+   * yielded (session 11) — the Film Lab empty state names the path it
+   * looked in (UX_SPEC §9 honest failure: never a silent "no stocks"). */
+  stocksDir: string;
+  stocksCount: number;
 }
 
 export interface AppErrorPayload {

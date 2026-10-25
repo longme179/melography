@@ -18,6 +18,7 @@
     tone,
     toast,
     wbPicker,
+    lastError,
     type ToneState,
   } from "../lib/stores";
 
@@ -75,7 +76,11 @@
         })
         .catch(() => (cacheLabel = ""));
     } catch (e) {
+      // Session 11: a failed render is a diagnosable error, not a silent
+      // blank canvas — surface it in the same banner every other command
+      // failure uses (UX_SPEC §9) in addition to the console trace.
       console.error("preview render failed", e);
+      lastError.set(e as never);
     }
   }
 
