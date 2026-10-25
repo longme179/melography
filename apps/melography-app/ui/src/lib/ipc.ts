@@ -84,7 +84,48 @@ export interface AppErrorPayload {
   context: string | null;
 }
 
-function parseFrame(buf: ArrayBuffer): PreviewFrame {
+/** Coerce every transport shape of a raw preview frame into an ArrayBuffer.
+ *
+ * Tauri resolves a command returning `ipc::Response` (raw bytes) with a
+ * real ArrayBuffer ONLY on the custom-protocol IPC path
+ * (`fetch ipc://localhost` — requires the CSP `connect-src` to allow
+ * `ipc:` / `http://ipc.localhost`). When the webview blocks that
+ * protocol, tauri silently falls back to the postMessage interface,
+ * where the SAME command arrives as:
+ *  - a plain JSON array of numbers (tauri's `format_result` serializes
+ *    `Vec<u8>` as JSON on that path), or
+ *  - `{ message: ArrayBuffer, index }` (channel-transport wrapper).
+ * Feeding either to `new DataView(...)` throws on JavaScriptCore
+ * (WebKitGTK): "Expected ArrayBuffer for the first argument." — the
+ * exact error the owner's first built-app run hit (session 12; every
+ * JSON command kept working, so only the viewport died). Normalizing
+ * here keeps previews functional on every transport, platform and
+ * webview policy — the CSP fix restores the fast path, this keeps the
+ * fallback honest. */
+function frameBuffer(value: unknown): ArrayBuffer {
+  if (value instanceof ArrayBuffer) return value;
+  if (value instanceof Uint8Array) {
+    // A view over its own exact buffer passes through; a subarray
+    // (byteOffset ≠ 0 / partial) is copied into a standalone buffer.
+    // (`TypedArray#buffer` is typed ArrayBufferLike — a view built by
+    // `Uint8Array.from`/`slice` is always a plain ArrayBuffer.)
+    return value.byteOffset === 0 && value.byteLength === value.buffer.byteLength
+      ? (value.buffer as ArrayBuffer)
+      : (value.slice().buffer as ArrayBuffer);
+  }
+  if (typeof value === "object" && value !== null && "message" in value) {
+    return frameBuffer((value as { message: unknown }).message);
+  }
+  if (Array.isArray(value)) {
+    return Uint8Array.from(value as number[]).buffer as ArrayBuffer;
+  }
+  throw new Error(
+    `preview frame arrived in an unsupported transport shape (${typeof value})`,
+  );
+}
+
+function parseFrame(payload: unknown): PreviewFrame {
+  const buf = frameBuffer(payload);
   const dv = new DataView(buf);
   if (dv.byteLength < WIRE_HEADER) throw new Error("frame too short");
   const magic = dv.getUint32(0, true);
@@ -117,14 +158,15 @@ export async function openImage(path: string): Promise<ImageInfo> {
 }
 
 export async function renderPreview(maxDim: number): Promise<PreviewFrame> {
-  // tauri v2: a command returning ipc::Response yields ArrayBuffer.
-  const buf = await invoke<ArrayBuffer>("render_preview", { maxDim });
-  return parseFrame(buf);
+  // tauri v2: a command returning ipc::Response yields ArrayBuffer on the
+  // custom-protocol path — parseFrame normalizes the fallback shapes too.
+  const payload = await invoke<unknown>("render_preview", { maxDim });
+  return parseFrame(payload);
 }
 
 export async function originalFrame(maxDim: number): Promise<PreviewFrame> {
-  const buf = await invoke<ArrayBuffer>("original_frame", { maxDim });
-  return parseFrame(buf);
+  const payload = await invoke<unknown>("original_frame", { maxDim });
+  return parseFrame(payload);
 }
 
 /** Cache stats (#25): hit-rates + budgets for the S2 status bar. */

@@ -758,5 +758,8 @@ export function tErrorCode(code: string, message: string): string {
   const key = `error.code.${code}`;
   const dict = catalogs[currentLang];
   const localized = dict[key] ?? catalogs.en[key];
-  return localized ? `${localized} — ${message}` : `${message} [${code}]`;
+  if (localized) return `${localized} — ${message}`;
+  // Raw JS errors carry no taxonomy code — show the message alone, never a
+  // misleading "[undefined]" suffix (session 12).
+  return code ? `${message} [${code}]` : message;
 }
