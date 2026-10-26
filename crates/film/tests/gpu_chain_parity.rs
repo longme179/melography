@@ -165,3 +165,202 @@ fn full_chain_parity_all_stocks_all_stages_on() {
         );
     }
 }
+
+/// Mono-specific isolation (the round-4/6 finding: classic-monochrome-400
+/// diverges while every warm case sits at 1e-7 — each spatial stage off
+/// for the mono stock pins WHICH stage carries the mono delta; this leg
+/// only REPORTS, the battery above owns the verdict).
+#[test]
+fn full_chain_parity_mono_stage_isolation() {
+    let Some(ctx) = ctx() else {
+        eprintln!("SKIP: no GPU adapter here");
+        return;
+    };
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
+    let stock = reg.by_id("classic-monochrome-400").expect("mono stock");
+    let img = test_image(112, 84, 0.02);
+    let cases: &[(&str, f64, f64, f64)] = &[
+        ("mono/vignette-off", 0.0, 0.5, 1.0),
+        ("mono/veiling-off", 0.45, 0.0, 1.0),
+        ("mono/grain-off", 0.45, 0.5, 0.0),
+        ("mono/all-spatial-off", 0.0, 0.0, 0.0),
+    ];
+    for (name, vign, veil, grain) in cases {
+        let lens = LensParams {
+            vignette_amount: *vign,
+            veiling_amount: *veil,
+            veiling_sigma_mm: 0.35,
+            ..LensParams::default()
+        };
+        let mut params = params_for(stock, lens);
+        params.adjustments.grain_intensity = *grain;
+        let cpu = render(&img, &params).expect("cpu render");
+        let gpu = render_gpu(&img, &params, &ctx).expect("gpu render");
+        let (worst, at) = max_delta(&cpu, &gpu);
+        let px = (at / 3) as u32;
+        eprintln!(
+            "{name}: worst |Δ| = {worst:.3e} at (x={}, y={}, ch={})",
+            px % img.width(),
+            px / img.width(),
+            at % 3
+        );
+    }
+
+    // ── Standalone grain legs (the A2.3 grain_case pattern) ──────────
+    // Isolates the KERNEL at this geometry from the composition: the
+    // same GrainField, the same gpu_params pack, a synthetic density
+    // plane, CPU `GrainField::apply` vs GPU `run_grain` — at the A2.3
+    // geometry (256×192, exactly-representable mmpp = 0.140625) AND the
+    // battery geometry (112×84, INEXACT mmpp = 36/112) for the mono
+    // stock, plus a warm control at 112×84.
+    use melography_film::frame::{CropRule, FilmFrame};
+    use melography_film::grain::GrainField;
+    use melography_film::optics::Plane;
+    use melography_gpu::spatial::run_grain;
+
+    fn density_plane(w: u32, h: u32) -> Plane {
+        let mut p = Plane::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let fx = f64::from(x) / f64::from(w.max(1) - 1);
+                let fy = f64::from(y) / f64::from(h.max(1) - 1);
+                let disc =
+                    (-(((fx - 0.6) * (fx - 0.6) + (fy - 0.35) * (fy - 0.35)) / 0.01).exp() * 3.0)
+                        .exp();
+                let v = (0.02 + 2.2 * fx + 0.4 * (1.0 - fy) + 1.2 * disc).min(3.0);
+                p.set3(x, y, [v * 1.03, v, v * 0.97]);
+            }
+        }
+        p
+    }
+
+    fn grain_leg(name: &str, stock: &melography_film::profile::StockProfile, w: u32, h: u32) {
+        let field = GrainField::resolve(stock, 1.0, None);
+        let frame = FilmFrame::from_dims(w, h, stock.crop_rule);
+        let src = density_plane(w, h);
+        let mut cpu = Plane::new(w, h);
+        field.apply(&src, &mut cpu, 0, h, &frame, 0, h);
+        let params = field.gpu_params(&frame, w, h);
+        let gpu = run_grain(&params, &src.data).expect("gpu grain dispatch");
+        let mut worst = 0.0f64;
+        let mut worst_at = 0usize;
+        for (idx, (c, g)) in cpu.data.iter().zip(&gpu).enumerate() {
+            let d = (f64::from(*c) - f64::from(*g)).abs();
+            if d > worst {
+                worst = d;
+                worst_at = idx;
+            }
+        }
+        eprintln!(
+            "{name}: standalone grain worst |Δ| = {worst:.3e} at sample {worst_at} (k={}, mmpp={:.6})",
+            params.k, frame.mm_per_pixel
+        );
+    }
+
+    let warm = reg.by_id("warm-400-negative").expect("warm stock");
+    grain_leg("standalone/mono@256x192", stock, 256, 192);
+    grain_leg("standalone/mono@112x84", stock, 112, 84);
+    grain_leg("standalone/warm@112x84", warm, 112, 84);
+    grain_leg("standalone/mono@128x96", stock, 128, 96);
+    grain_leg("standalone/mono@112x84-tall", stock, 112, 84);
+    let _ = CropRule::FitWidth; // (the LUT/leg imports stay used if legs change)
+}
+
+#[test]
+fn full_chain_parity_stage_isolation() {
+    let Some(ctx) = ctx() else {
+        eprintln!("SKIP: no GPU adapter here");
+        return;
+    };
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
+    let stock = reg.by_id("warm-400-negative").expect("warm stock");
+    let img = test_image(96, 72, 0.03);
+
+    // Each spatial stage disabled in turn (and all off): isolates its
+    // contribution and proves the skip paths match the CPU skips.
+    let cases: &[(&str, f64, f64, f64)] = &[
+        ("vignette-off", 0.0, 0.5, 1.0),
+        ("veiling-off", 0.45, 0.0, 1.0),
+        ("grain-off", 0.45, 0.5, 0.0),
+        ("all-spatial-off", 0.0, 0.0, 0.0),
+    ];
+    for (name, vign, veil, grain) in cases {
+        let lens = LensParams {
+            vignette_amount: *vign,
+            veiling_amount: *veil,
+            veiling_sigma_mm: 0.35,
+            ..LensParams::default()
+        };
+        let mut params = params_for(stock, lens);
+        params.adjustments.grain_intensity = *grain;
+        chain_case(name, &params, &img, &ctx);
+    }
+}
+
+#[test]
+fn full_chain_parity_supersampling_regimes() {
+    let Some(ctx) = ctx() else {
+        eprintln!("SKIP: no GPU adapter here");
+        return;
+    };
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
+    let stock = reg.by_id("warm-400-negative").expect("warm stock");
+    // Tall FitHeight images pin the k rule: 48×2000 → 12 µm/px (k=2),
+    // 24×4000 → 6 µm/px (k=1, native grain scale). Veiling stays OFF
+    // here: at 6 µm/px its σ = 58 px (radius 175) convolution over a
+    // tall image is minutes on a software adapter — the k regime is the
+    // grain question, and veiling parity is covered at preview scale.
+    let tall_lens = LensParams {
+        vignette_amount: 0.45,
+        veiling_amount: 0.0,
+        ..LensParams::default()
+    };
+    for (name, w, h) in [("k2-mid", 48u32, 2000u32), ("k1-native", 24, 4000)] {
+        let img = test_image(w, h, 0.02);
+        let params = params_for(stock, tall_lens);
+        chain_case(name, &params, &img, &ctx);
+    }
+}
+
+#[test]
+fn gpu_chain_determinism() {
+    let Some(ctx) = ctx() else {
+        eprintln!("SKIP: no GPU adapter here");
+        return;
+    };
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
+    let stock = reg.by_id("cool-800-night").expect("cool stock");
+    let img = test_image(96, 72, 0.05);
+    let params = params_for(stock, all_on_lens());
+    let a = render_gpu(&img, &params, &ctx).expect("run 1");
+    let b = render_gpu(&img, &params, &ctx).expect("run 2");
+    assert_eq!(
+        a.data(),
+        b.data(),
+        "two identical GPU compositions must be bit-equal"
+    );
+}
+
+#[test]
+fn gpu_chain_disabled_film_is_identity() {
+    let Some(ctx) = ctx() else {
+        eprintln!("SKIP: no GPU adapter here");
+        return;
+    };
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
+    let stock = reg.by_id("classic-monochrome-400").expect("mono stock");
+    let mut params = params_for(stock, all_on_lens());
+    params.adjustments.enabled = false;
+    let img = test_image(64, 48, 0.0);
+    let out = render_gpu(&img, &params, &ctx).expect("identity render");
+    assert_eq!(
+        out.data(),
+        img.data(),
+        "disabled film must be the identity (CPU contract)"
+    );
+}
