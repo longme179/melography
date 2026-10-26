@@ -144,8 +144,8 @@ impl GrainField {
         let h64 = f64::from(h);
         let mmpp = frame.mm_per_pixel;
         let cell = self.cell_mm;
-        let fx_of = |ix: i64| ((f64::from(ix) + 0.5) * cell - 18.0) / mmpp + w64 * 0.5;
-        let fy_of = |iy: i64| ((f64::from(iy) + 0.5) * cell - 12.0) / mmpp + h64 * 0.5;
+        let fx_of = |ix: i64| ((ix as f64 + 0.5) * cell - 18.0) / mmpp + w64 * 0.5;
+        let fy_of = |iy: i64| ((iy as f64 + 0.5) * cell - 12.0) / mmpp + h64 * 0.5;
         let mut ix_min = ((18.0 - w64 * 0.5 * mmpp) / cell - 0.5).ceil() as i64;
         while fx_of(ix_min) < 0.0 {
             ix_min += 1;
