@@ -287,7 +287,6 @@ mod tests {
 
         // ── Leg B: standalone grain fed the REAL respond output ──────
         use crate::emulsion::{apply_excitation_inplace, apply_response_inplace};
-        use crate::grain::GrainField;
         use crate::optics::{apply_vignette_inplace, Plane};
 
         let mut plane = Plane::new(w, h);
@@ -314,7 +313,7 @@ mod tests {
         let mut cpu_g = Plane::new(w, h);
         field.apply(&plane, &mut cpu_g, 0, h, &st.frame, 0, h);
         let gp = field.gpu_params(&st.frame, w, h);
-        let src_f32: Vec<f32> = plane.data.iter().map(|v| *v as f32).collect();
+        let src_f32: Vec<f32> = plane.data.clone();
         let gpu_g = run_grain_standalone(&gp, &src_f32).expect("grain on respond output");
         let mut worst = 0.0f64;
         let mut worst_at = 0usize;
