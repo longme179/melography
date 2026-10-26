@@ -460,4 +460,3 @@ mod tests {
         assert!(pack_vignette(&bad).is_err());
     }
 }
-

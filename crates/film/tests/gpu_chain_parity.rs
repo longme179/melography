@@ -157,9 +157,11 @@ fn full_chain_parity_all_stocks_all_stages_on() {
     eprintln!("all-stocks battery worst |Δ| = {worst_overall:.3e}");
     for (id, worst, pos) in &results {
         assert!(
-            worst <= TOL,
+            *worst <= TOL,
             "{id}: full-chain parity failed (worst |Δ| = {worst:.3e} > {TOL}) at (x={}, y={}, ch={})",
-            pos.0, pos.1, pos.2
+            pos.0,
+            pos.1,
+            pos.2
         );
     }
 }
