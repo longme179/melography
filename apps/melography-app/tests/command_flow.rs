@@ -87,17 +87,44 @@ fn session_library_preview_flow() {
     // Preview render + cache behavior (A1: the slot key is preview_key —
     // stack + tone + film + max_dim folded in).
     let base_key = preview_key(&ap1, &stack, None, None, 64);
-    let f1 = compose_preview(&ap1, &mut st.preview_cache, &stack, None, None, 64).unwrap();
+    let f1 = compose_preview(
+        &ap1,
+        &mut st.preview_cache,
+        &stack,
+        None,
+        None,
+        64,
+        &mut melography_app_lib::gpu::GpuRuntime::cpu_for_tests(),
+    )
+    .unwrap();
     assert_eq!((f1.width, f1.height), (64, 43));
     assert!(f1.rgba.len() == 64 * 43 * 4);
-    let f2 = compose_preview(&ap1, &mut st.preview_cache, &stack, None, None, 64).unwrap();
+    let f2 = compose_preview(
+        &ap1,
+        &mut st.preview_cache,
+        &stack,
+        None,
+        None,
+        64,
+        &mut melography_app_lib::gpu::GpuRuntime::cpu_for_tests(),
+    )
+    .unwrap();
     assert_eq!(f1.rgba, f2.rgba);
     assert_eq!(st.preview_cache.slot.as_ref().unwrap().key, base_key);
 
     // Parameter change invalidates.
     st.lut_stack[0].intensity = 0.0;
     let stack2 = st.resolve_stack().unwrap();
-    let f3 = compose_preview(&ap1, &mut st.preview_cache, &stack2, None, None, 64).unwrap();
+    let f3 = compose_preview(
+        &ap1,
+        &mut st.preview_cache,
+        &stack2,
+        None,
+        None,
+        64,
+        &mut melography_app_lib::gpu::GpuRuntime::cpu_for_tests(),
+    )
+    .unwrap();
     assert_ne!(f1.rgba, f3.rgba);
 
     // Missing LUT → explicit error state (never a skip).

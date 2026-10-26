@@ -92,7 +92,7 @@ impl FilmChainParams {
     pub fn with_adjustments(
         mut self,
         adjustments: Adjustments,
-        lens: LensParams,
+        pub(crate) lens: LensParams,
     ) -> Result<Self, ChainError> {
         self.adjustments = adjustments;
         self.lens = lens;
@@ -265,25 +265,27 @@ fn worker_cap(h: u32, m_total: u32) -> u32 {
 /// Stages resolved ONCE per render and shared read-only by every strip
 /// (and, in [`render_threaded`], by every worker thread — every field is
 /// plain data, so the struct is `Sync` by construction).
-struct ChainStages {
-    frame: FilmFrame,
-    lens: LensParams,
-    em: Emulsion,
-    grain: GrainStage,
-    print: Print,
-    veiling: GaussianKernel,
-    veiling_on: bool,
+/// `pub(crate)` (A2.4): the GPU chain (`gpu_chain`) resolves the same
+/// stages and packs them for the WGSL kernels.
+pub(crate) struct ChainStages {
+    pub(crate) frame: FilmFrame,
+    pub(crate) lens: LensParams,
+    pub(crate) em: Emulsion,
+    pub(crate) grain: GrainStage,
+    pub(crate) print: Print,
+    pub(crate) veiling: GaussianKernel,
+    pub(crate) veiling_on: bool,
     /// Recipe knobs the strip body needs per pixel (the rest are folded
     /// into the resolved stages above).
-    ev: f64,
-    pre_desaturate: f64,
-    m_veiling: u32,
-    m_halation: u32,
-    m_grain: u32,
+    pub(crate) ev: f64,
+    pub(crate) pre_desaturate: f64,
+    pub(crate) m_veiling: u32,
+    pub(crate) m_halation: u32,
+    pub(crate) m_grain: u32,
 }
 
 impl ChainStages {
-    fn resolve(params: &FilmChainParams, w: u32, h: u32) -> Self {
+    pub(crate) fn resolve(params: &FilmChainParams, w: u32, h: u32) -> Self {
         let frame = FilmFrame::from_dims(w, h, params.profile.crop_rule);
         let mmpp = frame.mm_per_pixel;
 

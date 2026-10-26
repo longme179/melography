@@ -25,7 +25,9 @@
 ## B. Lens & capture optics (order: before emulsion exposure — light passes the lens first)
 
 - Vignetting: `E ← E · cos^k(θ(u,v)·f_number_factor)` with cat-eye ellipse softening near corners; params: strength k, radius falloff `[measured-shape, artistic-range]`.
+  **GPU mirror (A2.4, session 20):** `melography-gpu::vignette::run_vignette_on` — the same falloff with positions resolved on the CPU in f64 and shipped as per-column/per-row centre-offset mm LUTs (the A2.3 small-numbers-only lesson; no absolute film coordinates in the shader); f32 vs the f64 reference measured 2.2e-7 worst-case in the repo-external cross-check, parity-gated inside the full-chain ≤ 2e-3 budget. `k ≤ 0` is the exact identity on both sides (skip).
 - Veiling glare / diffusion: `E ← (1−s)·E + s·(G * E)` where `G` = wide gaussian (bloom proxy) — **distinct from film halation** (§C) in shape, color, and stage; veiling is broadband and precedes the film; halation is red-biased and occurs in the film. UI keeps them separate with a tooltip.
+  **GPU mirror (A2.4, session 20):** the veiling bloom runs as the §C2 halation h+v dispatch in a *blend* combine (`(1−α)·src + α·G`, the exact `apply_veiling_mix` formula; the per-channel mode lives in the packed params' slot [0] — halation payloads pack 0 and keep the additive expression byte-identical). Same unit-DC taps, same zero padding; parity-gated inside the full-chain budget.
 - Low-order chromatic aberration `[ART, default off]`: per-channel radial scale ≤ 0.3%; MTF/sharpness proxy: configurable mild unsharp-on-input is explicitly `[ART]` (a "lens softness" downscale-and-resample is the default physical direction).
 - Distortion `[ART, default off]`: cubic barrel/pincushion on film coords.
 

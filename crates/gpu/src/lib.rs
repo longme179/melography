@@ -12,6 +12,9 @@ pub mod film_pixel_types;
 pub mod spatial_types;
 
 #[cfg(feature = "wgpu")]
+pub mod context;
+
+#[cfg(feature = "wgpu")]
 pub mod film_pixel;
 
 #[cfg(feature = "wgpu")]
@@ -22,6 +25,9 @@ pub mod readback;
 
 #[cfg(feature = "wgpu")]
 pub mod spatial;
+
+#[cfg(feature = "wgpu")]
+pub mod vignette;
 
 #[derive(Debug, thiserror::Error)]
 #[error("GPU error: {0}")]

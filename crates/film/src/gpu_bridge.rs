@@ -12,7 +12,7 @@ use crate::emulsion::{Adjustments, CrossProcessMode, Emulsion};
 use crate::print::Print;
 use crate::profile::{InversionPath, LayerLayout, Polarity};
 use melography_gpu::film_pixel_types::{CurveGpu, FilmPixelGpuParams};
-use melography_gpu::spatial_types::HalationGpuParams;
+use melography_gpu::spatial_types::{HalationGpuParams, VignetteGpuParams};
 
 fn curve_gpu(spline: &crate::curves::MonotoneSpline) -> CurveGpu {
     let (xs, ys, ms) = spline.control_data();
@@ -77,6 +77,9 @@ pub fn pack_film_pixel_params(
         scanner_matrix: print.scanner_matrix.0.map(|v| v as f32),
         hd_curves: em.splines.iter().map(curve_gpu).collect(),
         paper_curves: print.paper.iter().map(curve_gpu).collect(),
+        // A2.4: standalone/parity legs keep the fused all-stages
+        // dispatch; the GPU chain composition overrides per dispatch.
+        stage: 7,
     }
 }
 
@@ -112,5 +115,69 @@ pub fn pack_halation_gpu_params(em: &Emulsion, w: u32, h: u32) -> HalationGpuPar
         radius,
         tap_offset,
         taps,
+    }
+}
+
+/// A2.4 — pack the vignette stage (§B) for the WGSL kernel. The frame
+/// positions are resolved on the CPU in f64 with the SAME
+/// `pixel_to_mm` formula the reference uses, and shipped as
+/// per-column/per-row centre offsets — the A2.3 lesson: absolute film
+/// coordinates never enter the shader, only small-number math does.
+/// `k = 4·vignette_amount`; `k ≤ 0` is the exact identity on both
+/// sides (`cos(θ)^0 = 1`) and the caller skips the dispatch.
+pub fn pack_vignette_gpu_params(
+    lens: &crate::optics::LensParams,
+    frame: &crate::frame::FilmFrame,
+    w: u32,
+    h: u32,
+) -> VignetteGpuParams {
+    let half_diag_mm = (crate::frame::FRAME_LONG_MM * crate::frame::FRAME_LONG_MM / 4.0
+        + crate::frame::FRAME_SHORT_MM * crate::frame::FRAME_SHORT_MM / 4.0)
+        .sqrt();
+    let cu = crate::frame::FRAME_LONG_MM / 2.0;
+    let cv = crate::frame::FRAME_SHORT_MM / 2.0;
+    let mut du = Vec::with_capacity(w as usize);
+    for x in 0..w {
+        let [u, _] = frame.pixel_to_mm(x, 0);
+        du.push((u - cu) as f32);
+    }
+    let mut dv = Vec::with_capacity(h as usize);
+    for y in 0..h {
+        let [_, v] = frame.pixel_to_mm(0, y);
+        dv.push((v - cv) as f32);
+    }
+    VignetteGpuParams {
+        w,
+        h,
+        half_diag_mm: half_diag_mm as f32,
+        half_fov_rad: (lens.lens_fov_deg.to_radians() / 2.0) as f32,
+        k: (4.0 * lens.vignette_amount) as f32,
+        du,
+        dv,
+    }
+}
+
+/// A2.4 — pack the veiling bloom (§B) as a halation-kernel payload in
+/// **blend** mode: all three channels share the resolved unit-DC
+/// gaussian; `α = 0.3·veiling_amount` (the CPU `apply_veiling_mix` s);
+/// the vertical-pass combine `(1−α)·src + α·G` is the CPU mix formula
+/// exactly. Only called when the chain resolved `veiling_on` (the CPU
+/// skip condition: amount > 0 AND a non-identity kernel).
+pub fn pack_veiling_gpu_params(
+    veiling: &crate::optics::GaussianKernel,
+    veiling_amount: f64,
+    w: u32,
+    h: u32,
+) -> HalationGpuParams {
+    let s = 0.3 * veiling_amount;
+    let radius = veiling.radius_px;
+    HalationGpuParams {
+        w,
+        h,
+        alpha: [s as f32; 3],
+        radius: [radius; 3],
+        tap_offset: [0, 0, 0],
+        blend: [true, true, true],
+        taps: veiling.taps.iter().map(|t| *t as f32).collect(),
     }
 }

@@ -19,6 +19,8 @@ pub mod curves;
 pub mod emulsion;
 pub mod frame;
 pub mod gpu_bridge;
+#[cfg(feature = "gpu-chain")]
+pub mod gpu_chain;
 pub mod grain;
 pub mod hash;
 pub mod optics;

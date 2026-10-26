@@ -95,6 +95,9 @@ pub struct EditorState {
     pub redo: Vec<RecipeSnapshot>,
     /// App settings (UX_SPEC §7) — loaded at startup, saved on change.
     pub settings: crate::settings::Settings,
+    /// A2.4 GPU runtime: the preview film-leg dispatch + the honest
+    /// degradation state (synced from `settings` at load and on change).
+    pub gpu: crate::gpu::GpuRuntime,
     /// Recent files (UX_SPEC §3 S1 Home) — loaded at startup.
     pub recents: crate::recents::Recents,
     /// Warning surface: a sidecar/preset referenced a stock id that is
@@ -111,6 +114,10 @@ impl EditorState {
             eprintln!("melography: {w} — using defaults");
         }
         let recents = crate::recents::Recents::load(&library_root.join("recents.json"));
+        // A2.4: the GPU runtime mirrors the loaded settings (enabled +
+        // adapter policy) before the struct takes ownership.
+        let mut gpu = crate::gpu::GpuRuntime::new();
+        gpu.sync_from_settings(&settings);
         // Cache budgets (#25): preview slot = the setting; LUT LRU = a
         // quarter share (see cache.rs for the policy + rationale).
         let total_budget = u64::from(settings.cache_budget_mb) * 1024 * 1024;
@@ -130,6 +137,7 @@ impl EditorState {
             history: Vec::new(),
             redo: Vec::new(),
             settings,
+            gpu,
             recents,
             missing_stock: None,
         }

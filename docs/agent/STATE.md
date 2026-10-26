@@ -1,6 +1,6 @@
 # MELOGRAPHY — Agent State
 
-**Updated:** 2026-10-26 (session 18 — PRs #35/#36/#37/#38 ALL MERGED; the owner's 12-core perf re-measure is in and re-pinned in PLAN §4; this session implements A2.3 GPU spatial kernels on `agent/m5a23-gpu-spatial`) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
+**Updated:** 2026-10-26 (session 20 — A2.3 sits in PR #39 awaiting owner review after a CI retrigger cleared a macOS DNS flake; this session implements A2.4 full-chain GPU preview wiring on `agent/m5a24-gpu-wiring`, stacked on PR #39) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
 
 ## Current milestone
 
@@ -11,39 +11,52 @@ transport, PR #35), the viewport hotfix (PR #36), A2.1 strip threading
 owner's 12-core re-measure (2026-10-26): preview p50 2048×1536 went
 3.4–4.4 s (M2) → 0.32–0.47 s (A2.1+A2.2, 7–10×); 2/5 stocks inside
 the ≤ 400 ms cold budget, worst +18 % — re-pinned in PLAN §4.
-**A2.3 (GPU spatial kernels) is implemented on
-`agent/m5a23-gpu-spatial`**: WGSL grain gather (the FULL §G model —
-bit-portable u32 hash stream, presence as the exact u32 threshold
-`ceil(p·2^32)`, k×k supersampling) + halation h+v (per-channel taps +
-α, CPU skip semantics), `spatial_types.rs` plain-data packs,
-`GrainField::gpu_params()` + `gpu_bridge::pack_halation_gpu_params()`
-bridges, naga offline gates on every OS, CPU↔GPU parity ≤ 1e-3 on CI
-adapters (5 stocks × k∈{1,2,4} + σ(D)=0 region + disabled + halation
-variants + dispatch determinism), and an owner-run `spatial_perf`
-evidence leg. Design validated BEFORE any Rust in a repo-external
-Python cross-check (`~/my-project/scripts/a23_grain_wgsl_check.py`:
-presence 200k draws, cell streams to 2.2e-9, k rule). A3–A5 remain.
+**A2.3 (GPU spatial kernels) is in PR #39** (CI 38/38 green after the
+session-19 retrigger cleared a transient ort-sys DNS flake on the macOS
+runner; awaiting owner review). **A2.4 (full-chain GPU preview wiring)
+is implemented on `agent/m5a24-gpu-wiring`, stacked on PR #39**:
+persistent `GpuContext` (all pipelines compiled once, process-wide
+slot) + the A4 adapter policy (Auto score = device-type rank ×100 +
+backend rank; ByFingerprint pins the Settings pick, honest error when
+absent), a vignette kernel (per-column/row mm offset LUTs, cross-check
+2.2e-7), veiling as the halation h+v dispatch in a blend combine (the
+exact `apply_veiling_mix` formula; halation payloads stay
+byte-identical), the film_pixel kernel stage-split (split ≡ fused gated
+BIT-EXACT), `gpu_chain::render_gpu` sequencing vignette → veiling →
+excitation → halation → response → FULL-model grain → print over the
+persistent context, the app preview leg trying GPU first with the
+threaded fast-grain CPU fallback per frame (never blocks, never errors
+to the user), the `GpuRuntime` fallback contract (no adapter / pinned
+absent / 3-strike session breaker, all with honest reasons), the
+Settings Graphics picker + status rows (`gpu_status`), full-chain
+parity ≤ 2e-3 vs the CPU monolithic render (all stocks, stage
+isolation, k regimes, determinism, identity), and the owner-run
+`gpu_chain_perf` evidence leg. A3–A5 (minus A4's policy core, now
+shipped) remain.
 
-## Session 18 delivered (this PR — A2.3 GPU spatial kernels)
+## Session 20 delivered (this PR — A2.4 full-chain GPU preview wiring)
 
-1. ✅ `crates/gpu/src/spatial_types.rs` — `GrainGpuParams` /
-   `HalationGpuParams` + packed layouts (u32 via `f32::from_bits` ↔
-   WGSL `bitcast<u32>`) + layout tests; always compiled so
-   `melography-film` packs without the graphics stack
-2. ✅ `crates/gpu/src/spatial.rs` — 3 WGSL kernels (grain gather full
-   model; halation h; halation v) + `run_grain`/`run_halation` in the
-   film_pixel harness idiom + naga validation tests (every OS)
-3. ✅ Bridges: `GrainField::gpu_params()` (a_norm/Cholesky/threshold/k
-   resolved CPU-side in f64) + `pack_halation_gpu_params()` (activity
-   = active layer ∧ α>0 ∧ non-identity)
-4. ✅ `spatial_parity.rs` gates ≤ 1e-3 (see coverage above) +
-   `spatial_perf.rs` (#[ignore]d owner-run: grain/halation at
-   2048×1536 + 6000×4000 per stock, device-acquire baseline line)
-5. ✅ Docs: PLAN A2.3 progress + §4 re-pin (owner numbers), FILM_MODEL
-   §C2/§G GPU-mirror notes, session log 18
-6. ✅ Explicitly NOT in this slice (next step): app wiring — persistent
-   GPU context, full-chain GPU preview composition, adapter policy
-   (A4), fallback contract; CPU stays the reference path everywhere
+1. ✅ `crates/gpu/src/context.rs` — persistent GpuContext (device+queue+
+   all 5 pipelines compiled once), AdapterPolicy (Auto score / ByFingerprint),
+   ranked_adapters, global init/reset/reuse, uncaptured-error parking,
+   shared compute_pipeline/read_back + AcquiredDevice
+2. ✅ `crates/gpu/src/vignette.rs` — WGSL vignette kernel (offset-LUT
+   positions) + run_vignette_on + naga validation
+3. ✅ `crates/gpu/src/spatial.rs` — halation V-shader blend mode (veiling);
+   dispatch factoring for the persistent-context `_on` variants
+4. ✅ `crates/gpu/src/film_pixel.rs` — stage split (excite/respond/printStage,
+   flags bits 4–6; fused = 7, math unchanged) + `_on` variant
+5. ✅ `crates/film/src/gpu_chain.rs` — the full-chain composition (feature
+   `gpu-chain`), grain_fast forced false (GPU = full-quality §G), split≡fused
+   bit-exact unit test
+6. ✅ Parity gates ≤ 2e-3 vs the CPU monolithic render (all stocks,
+   stage isolation, k regimes, determinism, identity, honest skip) +
+   `gpu_chain_perf` owner-run leg
+7. ✅ App: GpuRuntime fallback contract, render_pipeline GPU-first film leg,
+   `gpu_status` command + Settings Graphics picker/status (EN/VI),
+   `gpu_adapter` setting, ipc-contract sample
+8. ✅ Docs: PLAN A2.4 progress + §4 re-pin note, FILM_MODEL §B GPU mirrors,
+   session log 20, STATE re-pin
 
 ## Number analysis the owner asked for (2026-10-26 log)
 
@@ -65,12 +78,15 @@ presence 200k draws, cell streams to 2.2e-9, k rule). A3–A5 remain.
   PR is verified by CI fmt/clippy/tests ×3 OS; code written
   rustfmt-canonical (calibrated against repo-passing forms) and
   self-reviewed for borrowck
-- Python cross-check + WGSL lint + LUT-gather simulation
-  (repo-external, `~/my-project/scripts/`): ALL PASS
-- **CI round 7: 38/38 GREEN on both trigger runs** — Metal parity:
-  grain worst 8.583e-6 (k=1 native case; was 2.248e-3 at round 3),
-  halation 2.384e-7, determinism bit-equal, zero pixels > 1e-5;
-  WARP passes the same gates
+- Python cross-check (`a24_gpu_wiring_check.py`: vignette 2.2e-7,
+  veiling blend 1.1e-7, halation blend-flag value-identity) + WGSL lint
+  over all five shaders (`a24_wgsl_lint.py`) + tsc/vite/i18n/contrast/
+  blit gates: ALL PASS
+- **CI (this PR): pending first run** — the stacked A2.3 head (PR #39,
+  commit 1d78e3f) is 38/38 green after the session-19 retrigger (the
+  macOS ort-sys DNS flake); Metal spatial parity there: grain worst
+  8.583e-6, halation 2.384e-7. This PR adds the full-chain gates —
+  first CI round will report the composition numbers honestly
 - `validate_docs.py` — PASS locally (PLAN/FILM_MODEL/session log)
 - Sandbox limits (unchanged): node/npm/python3 present; **no cargo** —
   Rust fmt/clippy/tests verified by CI; owner machine is the runtime

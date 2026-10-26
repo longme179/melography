@@ -28,9 +28,16 @@ pub struct Settings {
     /// Soft budget for the render caches (MiB) — advisory today, enforced
     /// when the tile-cache work lands (#25).
     pub cache_budget_mb: u32,
-    /// GPU preference (the preview pipeline is CPU-side today — the UI
-    /// labels this honestly; the flag drives the GPU path when it ships).
+    /// GPU preference — the A2.4 preview film leg runs on the GPU when
+    /// an adapter is available and this is on; every failure falls back
+    /// to the (fast-grain) CPU leg for that frame.
     pub gpu_enabled: bool,
+    /// Which adapter to bind: `"auto"` (the A4 score policy) or an
+    /// adapter fingerprint `name|vendor|backend|device_type` (the
+    /// Settings picker). A fingerprint that is absent at render time
+    /// disables the GPU leg for the session with an honest reason
+    /// (never a silent wrong-adapter render).
+    pub gpu_adapter: String,
     /// `ask` | `none` | `stable` | `beta` (ADR-0005 consent flow).
     pub update_channel: String,
     /// Offline-first explainer toggle (nothing leaves the machine either
@@ -48,6 +55,7 @@ impl Default for Settings {
             preview_max_dim: 1600,
             cache_budget_mb: 512,
             gpu_enabled: true,
+            gpu_adapter: "auto".into(),
             update_channel: "ask".into(),
             offline_mode: true,
             log_level: "info".into(),
@@ -103,6 +111,15 @@ impl Settings {
         }
         s.preview_max_dim = s.preview_max_dim.clamp(256, 2560);
         s.cache_budget_mb = s.cache_budget_mb.clamp(64, 4096);
+        // "auto" or a bounded fingerprint string (validated against the
+        // live adapter list at render/status time — clamping here only
+        // bounds the garbage, it cannot decide presence).
+        let adapter = s.gpu_adapter.trim().to_string();
+        s.gpu_adapter = if adapter.is_empty() || adapter.len() > 200 {
+            "auto".into()
+        } else {
+            adapter
+        };
         s
     }
 }

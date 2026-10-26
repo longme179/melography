@@ -301,6 +301,7 @@ pub fn compose_preview(
     film: Option<&FilmLeg>,
     tone: Option<&melography_color::tone::ToneParams>,
     max_dim: u32,
+    gpu: &mut crate::gpu::GpuRuntime,
 ) -> Result<PreviewFrame, LutError> {
     let start = std::time::Instant::now();
     // Identity tone params are exactly "no tone leg" — same key, same path.
@@ -313,7 +314,7 @@ pub fn compose_preview(
         }
         None => {
             cache.misses += 1;
-            let (rendered, clamped) = render_pipeline(base, stack, film, tone, max_dim)?;
+            let (rendered, clamped) = render_pipeline(base, stack, film, tone, max_dim, gpu)?;
             // The slot caches the BOUNDED preview (A1): with a film leg
             // the pipeline already rendered at preview scale; without one
             // the LUT stack ran at full resolution (export-parity
@@ -353,12 +354,20 @@ pub fn compose_preview(
 /// stack (finishing semantics). With a film leg the returned image is the
 /// final preview-resolution result; without one it is the full-resolution
 /// LUT'd image — `compose_preview` bounds it before caching (A1).
+///
+/// A2.4 — the film leg tries the GPU first (full-chain composition over
+/// the persistent context, FULL grain model): any miss (off in settings,
+/// no adapter, session-disabled) or error falls back to the threaded
+/// fast-grain CPU leg for that frame — the preview never blocks on the
+/// GPU, never surfaces a GPU error to the user (the honest state lives
+/// in `gpu_status`).
 fn render_pipeline(
     base: &ImageF32,
     stack: &[ResolvedLut],
     film: Option<&FilmLeg>,
     tone: Option<&melography_color::tone::ToneParams>,
     max_dim: u32,
+    gpu: &mut crate::gpu::GpuRuntime,
 ) -> Result<(ImageF32, u64), LutError> {
     // Tone first, at full resolution (export parity: the CLI/export path
     // applies tone to the full-res working image before LUT/film).
@@ -372,14 +381,27 @@ fn render_pipeline(
         toned
     };
     if let Some(f) = film {
-        // A2.1 — strip threading: byte-identical to the monolithic chain
-        // (chunks are just another strip partition; the §L gate pins it
-        // for every worker count), one chunk per logical core, scratch
-        // capped at 2× the monolithic footprint. Export keeps the
-        // sequential CLI path (memory-first, R-REN-2).
-        img = film_chain::render_threaded(&img, &f.params, 0).map_err(|e| LutError::Malformed {
-            detail: format!("film chain: {e}"),
-        })?;
+        // A2.4: GPU first (full model, cached pipelines). `None` = off /
+        // unavailable (CPU leg); `Some(Err)` = attempted and failed — CPU
+        // leg for THIS frame, failure counted by the runtime (3 strikes →
+        // session-disabled, surfaced by `gpu_status`).
+        let gpu_out = gpu.try_film_leg(&img, &f.params);
+        img = match gpu_out {
+            Some(Ok(out)) => out,
+            _ => {
+                // A2.1 — strip threading: byte-identical to the monolithic
+                // chain (chunks are just another strip partition; the §L
+                // gate pins it for every worker count), one chunk per
+                // logical core, scratch capped at 2× the monolithic
+                // footprint. Export keeps the sequential CLI path
+                // (memory-first, R-REN-2).
+                film_chain::render_threaded(&img, &f.params, 0).map_err(|e| {
+                    LutError::Malformed {
+                        detail: format!("film chain: {e}"),
+                    }
+                })?
+            }
+        };
     }
     // LUT stack (full-res path unchanged when no film leg is active).
     if film.is_some() {
@@ -541,8 +563,26 @@ mod tests {
         }];
 
         let mut cache = crate::cache::PreviewCacheState::new(u64::MAX);
-        let f1 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
-        let f2 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
+        let f1 = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            None,
+            None,
+            16,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
+        let f2 = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            None,
+            None,
+            16,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         assert_eq!(f1.rgba, f2.rgba, "cached path returns identical pixels");
         // A1: the slot key includes max_dim — same request, same key.
         assert!(cache.slot.as_ref().unwrap().key == preview_key(&base, &stack, None, None, 16));
@@ -560,7 +600,16 @@ mod tests {
             ),
             lut,
         }];
-        let f3 = compose_preview(&base, &mut cache, &stack2, None, None, 16).unwrap();
+        let f3 = compose_preview(
+            &base,
+            &mut cache,
+            &stack2,
+            None,
+            None,
+            16,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         assert_ne!(f1.rgba, f3.rgba, "intensity 0 vs 1 must differ");
     }
 
@@ -571,11 +620,29 @@ mod tests {
         let base = gradient(32, 32);
         let stack: Vec<ResolvedLut> = Vec::new();
         let mut cache = crate::cache::PreviewCacheState::new(64); // 64 bytes!
-        let f1 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
+        let f1 = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            None,
+            None,
+            16,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         assert!(cache.slot.is_none(), "oversize render not retained");
         assert_eq!(cache.misses, 1);
         // Second compose: still a miss (nothing cached), same pixels.
-        let f2 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
+        let f2 = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            None,
+            None,
+            16,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         assert_eq!(f1.rgba, f2.rgba);
         assert_eq!(cache.misses, 2, "no hit possible when uncached");
         assert_eq!(cache.hits, 0);
@@ -587,7 +654,16 @@ mod tests {
         let base = gradient(32, 32);
         let stack: Vec<ResolvedLut> = Vec::new();
         let mut cache = crate::cache::PreviewCacheState::new(u64::MAX);
-        let f1 = compose_preview(&base, &mut cache, &stack, None, None, 16).unwrap();
+        let f1 = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            None,
+            None,
+            16,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         let key_before = cache.slot.as_ref().unwrap().key;
 
         // Identity tone = same key, same pixels.
@@ -598,6 +674,7 @@ mod tests {
             None,
             Some(&ToneParams::default()),
             16,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
         )
         .unwrap();
         assert_eq!(key_before, cache.slot.as_ref().unwrap().key);
@@ -608,7 +685,16 @@ mod tests {
             ev: 1.0,
             ..ToneParams::default()
         };
-        let f_ev = compose_preview(&base, &mut cache, &stack, None, Some(&tone), 16).unwrap();
+        let f_ev = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            None,
+            Some(&tone),
+            16,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         assert_ne!(key_before, cache.slot.as_ref().unwrap().key);
         let mean = |f: &PreviewFrame| {
             f.rgba.iter().map(|&c| u32::from(c)).sum::<u32>() / f.rgba.len() as u32
@@ -784,7 +870,16 @@ mod tests {
         let stack: Vec<ResolvedLut> = Vec::new();
         let mut cache = crate::cache::PreviewCacheState::new(u64::MAX);
 
-        let big = compose_preview(&base, &mut cache, &stack, None, None, 512).unwrap();
+        let big = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            None,
+            None,
+            512,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         assert_eq!(
             (big.width, big.height),
             (512, 384),
@@ -793,7 +888,16 @@ mod tests {
         let slot = cache.slot.as_ref().expect("512-bounded render retained");
         assert!(slot.image.width().max(slot.image.height()) <= 512);
 
-        let small = compose_preview(&base, &mut cache, &stack, None, None, 256).unwrap();
+        let small = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            None,
+            None,
+            256,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         assert_eq!(
             (small.width, small.height),
             (256, 192),
@@ -824,7 +928,16 @@ mod tests {
         let stack: Vec<ResolvedLut> = Vec::new();
         let mut cache = crate::cache::PreviewCacheState::new(u64::MAX);
 
-        let f = compose_preview(&base, &mut cache, &stack, Some(&leg), None, 256).unwrap();
+        let f = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            Some(&leg),
+            None,
+            256,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         assert_eq!((f.width, f.height), (256, 171), "600×400 → 256-bounded");
         assert_eq!(f.rgba.len(), 256 * 171 * 4, "wire frame matches geometry");
         let slot = cache.slot.as_ref().expect("film render retained");
@@ -833,7 +946,16 @@ mod tests {
         // Same leg at a different bound → miss + re-render at that scale
         // (grain statistics are scale-correct, never a stretched stale
         // frame).
-        let f2 = compose_preview(&base, &mut cache, &stack, Some(&leg), None, 128).unwrap();
+        let f2 = compose_preview(
+            &base,
+            &mut cache,
+            &stack,
+            Some(&leg),
+            None,
+            128,
+            &mut crate::gpu::GpuRuntime::cpu_for_tests(),
+        )
+        .unwrap();
         assert_eq!((f2.width, f2.height), (128, 85));
         assert_eq!(cache.misses, 2);
     }

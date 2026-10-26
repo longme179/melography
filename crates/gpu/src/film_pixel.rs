@@ -19,11 +19,12 @@
 //! reference and the verdict. Adapter-less environments get an honest
 //! `NoAdapter` error.
 
+use crate::context::{compute_pipeline, AcquiredDevice};
 use crate::film_pixel_types::{pack, FilmPixelGpuParams};
 use crate::{AdapterReport, GpuError};
 use wgpu::util::DeviceExt;
 
-const FILM_PIXEL_SHADER: &str = r#"
+pub(crate) const FILM_PIXEL_SHADER: &str = r#"
 @group(0) @binding(0) var<storage, read>       params: array<f32>;
 @group(0) @binding(1) var<storage, read>       inputs: array<f32>;
 @group(0) @binding(2) var<storage, read_write> outputs: array<f32>;
@@ -83,24 +84,23 @@ fn mat3Apply(m: u32, v: vec3<f32>) -> vec3<f32> {
     );
 }
 
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let s = gid.x;
-    if (s * 3u + 2u >= arrayLength(&inputs)) { return; }
+fn stageMask() -> u32 { return (flags() >> 4u) & 7u; }
 
-    var e = vec3<f32>(inputs[s*3u], inputs[s*3u+1u], inputs[s*3u+2u]);
-
-    // §A5 pre-desaturation [ART].
+// Stage 1 — §A5 pre-desaturation + §C1/C3 excitation with total scale.
+// Returns the excitation x (density-domain input).
+fn excite(e_in: vec3<f32>) -> vec3<f32> {
+    var e = e_in;
     let pre = params[5];
     if (pre > 0.0) {
         let lum = 0.2126*e.x + 0.7152*e.y + 0.0722*e.z;
         e = e * (1.0 - pre) + vec3<f32>(lum) * pre;
     }
+    return mat3Apply(17u, e) * params[4];
+}
 
-    // §C1/C3 excitation with total scale.
-    let x = mat3Apply(17u, e) * params[4];
-
-    // §D response per active layer.
+// Stage 2 — §D response per active layer + crosstalk + §E bleach
+// bypass + clamp. Returns the density d.
+fn respond(x: vec3<f32>) -> vec3<f32> {
     let layers = select(3u, 1u, isMono());
     var d = vec3<f32>(0.0);
     var f_mid = vec3<f32>(0.0);
@@ -145,19 +145,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let silver = clamp((lum - 0.15) * 1.9, 0.0, 2.3);
         d = mix(d, vec3<f32>(silver), bb);
     }
-    d = max(d, vec3<f32>(0.0));
+    return max(d, vec3<f32>(0.0));
+}
 
-    // §F inversion.
+// Stage 3 — §F inversion (paper / scanner / direct-scan / reversal) +
+// output matrix. Returns the linear output.
+fn printStage(d: vec3<f32>) -> vec3<f32> {
     var lin = vec3<f32>(0.0);
     if (isReversal()) {
         // Direct projection, normalized at the white anchor.
-        for (var li = 0u; li < layers; li = li + 1u) {
+        for (var li = 0u; li < select(3u, 1u, isMono()); li = li + 1u) {
             let d_eff = d[li] - params[38u + li];
             lin[li] = pow(10.0, -d_eff) * pow(10.0, params[12]);
         }
     } else {
         let p = path();
-        for (var li = 0u; li < layers; li = li + 1u) {
+        for (var li = 0u; li < select(3u, 1u, isMono()); li = li + 1u) {
             let d_eff = d[li] - params[38u + li];
             let t = pow(10.0, -d_eff);
             if (p == 0u) {
@@ -182,9 +185,27 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     lin = clamp(lin, vec3<f32>(0.0), vec3<f32>(1.0));
     var out = mat3Apply(41u, lin);
     if (isMono()) { out = vec3<f32>(out.x); }
-    outputs[s*3u]   = out.x;
-    outputs[s*3u+1u] = out.y;
-    outputs[s*3u+2u] = out.z;
+    return out;
+}
+
+// A2.4 stage dispatch: bits 0/1/2 of flags>>4 select excitation /
+// response / print. stage=7 is the fused pre-A2.4 behaviour (identical
+// math sequence — the split dispatches round-trip f32 buffers, which is
+// lossless, so split ≡ fused holds bit-exact by construction and is
+// gated as such).
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let s = gid.x;
+    if (s * 3u + 2u >= arrayLength(&inputs)) { return; }
+
+    var v = vec3<f32>(inputs[s*3u], inputs[s*3u+1u], inputs[s*3u+2u]);
+    let st = stageMask();
+    if ((st & 1u) != 0u) { v = excite(v); }
+    if ((st & 2u) != 0u) { v = respond(v); }
+    if ((st & 4u) != 0u) { v = printStage(v); }
+    outputs[s*3u]   = v.x;
+    outputs[s*3u+1u] = v.y;
+    outputs[s*3u+2u] = v.z;
 }
 "#;
 
@@ -196,27 +217,39 @@ pub fn first_adapter_report() -> Option<AdapterReport> {
 /// Run the film pixel kernel on `inputs` (interleaved RGB f32).
 /// Returns the outputs (same layout). No adapter → honest `NoAdapter`.
 pub fn run_film_pixel(params: &FilmPixelGpuParams, inputs: &[f32]) -> Result<Vec<f32>, GpuError> {
+    let ctx = AcquiredDevice::acquire()?;
+    let pipeline = compute_pipeline(&ctx.device, "film-pixel", FILM_PIXEL_SHADER);
+    film_pixel_dispatch(&ctx.device, &ctx.queue, &pipeline, params, inputs)
+}
+
+/// A2.4 — persistent-context variant (cached pipeline).
+pub fn run_film_pixel_on(
+    ctx: &crate::context::GpuContext,
+    params: &FilmPixelGpuParams,
+    inputs: &[f32],
+) -> Result<Vec<f32>, GpuError> {
+    film_pixel_dispatch(
+        &ctx.device,
+        &ctx.queue,
+        &ctx.pipelines.film_pixel,
+        params,
+        inputs,
+    )
+}
+
+fn film_pixel_dispatch(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pipeline: &wgpu::ComputePipeline,
+    params: &FilmPixelGpuParams,
+    inputs: &[f32],
+) -> Result<Vec<f32>, GpuError> {
     let packed = pack(params).map_err(GpuError::Wgpu)?;
     let n = inputs.len() / 3;
     let out_len = n * 3;
     if out_len == 0 {
         return Ok(Vec::new());
     }
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .map_err(|_| GpuError::NoAdapter)?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-            .map_err(|e| GpuError::Wgpu(e.to_string()))?;
 
     let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("film-params"),
@@ -241,18 +274,6 @@ pub fn run_film_pixel(params: &FilmPixelGpuParams, inputs: &[f32]) -> Result<Vec
         mapped_at_creation: false,
     });
 
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("film-pixel"),
-        source: wgpu::ShaderSource::Wgsl(FILM_PIXEL_SHADER.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("film-pixel-pipeline"),
-        layout: None,
-        module: &module,
-        entry_point: None,
-        compilation_options: Default::default(),
-        cache: None,
-    });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("film-pixel-bg"),
         layout: &pipeline.get_bind_group_layout(0),
@@ -280,33 +301,14 @@ pub fn run_film_pixel(params: &FilmPixelGpuParams, inputs: &[f32]) -> Result<Vec
             label: Some("film-pixel-pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&pipeline);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups((n as u32).div_ceil(64), 1, 1);
     }
     encoder.copy_buffer_to_buffer(&out_storage, 0, &out_readback, 0, out_readback.size());
     queue.submit(Some(encoder.finish()));
 
-    // Two-buffer readback idiom (S1 lesson — see lut3d.rs).
-    let slice = out_readback.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |r| {
-        let _ = tx.send(r);
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .map_err(|e| GpuError::Wgpu(e.to_string()))?;
-    rx.recv()
-        .map_err(|_| GpuError::Wgpu("map channel closed".into()))?
-        .map_err(|e| GpuError::Wgpu(e.to_string()))?;
-    let floats: Vec<f32> = {
-        let data = slice
-            .get_mapped_range()
-            .map_err(|e| GpuError::Wgpu(e.to_string()))?;
-        bytemuck::cast_slice(&data).to_vec()
-    };
-    out_readback.unmap();
-    Ok(floats)
+    crate::context::read_back(device, &out_readback)
 }
 
 #[cfg(all(test, feature = "wgpu"))]

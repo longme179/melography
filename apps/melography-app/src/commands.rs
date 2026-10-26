@@ -205,13 +205,21 @@ pub fn render_preview(state: St, max_dim: u32) -> Result<tauri::ipc::Response, A
     let stack = st.resolve_stack()?;
     let film_leg = st.film_leg();
     let tone_params = st.tone.params.filter(|p| !p.is_identity());
+    // A2.4: `preview_cache` and `gpu` are two mutable field borrows of
+    // one guard — destructure first (two simultaneous &mut through a
+    // MutexGuard DerefMut are E0499; disjoint fields of one &mut are
+    // fine).
+    let EditorState {
+        preview_cache, gpu, ..
+    } = &mut *st;
     let frame = render::compose_preview(
         &base,
-        &mut st.preview_cache,
+        preview_cache,
         &stack,
         film_leg.as_ref(),
         tone_params.as_ref(),
         max_dim,
+        gpu,
     )?;
     Ok(tauri::ipc::Response::new(frame.to_wire()))
 }
@@ -916,6 +924,10 @@ pub fn set_settings(
     // regression) must not smuggle an out-of-range preview_max_dim into
     // the render fallback — `resolve_max_dim` re-clamps regardless.
     st.settings = settings.clamped();
+    // A2.4: mirror the GPU intent (enabled + adapter policy); a changed
+    // adapter also drops the shared GPU context (the next render rebinds
+    // and re-arms the session circuit breaker).
+    st.gpu.sync_from_settings(&st.settings);
     st.settings
         .save(&st.library_root().join("settings.json"))
         .map_err(|e| AppError::new("settings.save", e.to_string()))?;
@@ -968,6 +980,113 @@ pub fn cache_stats_json(st: &EditorState) -> serde_json::Value {
 pub fn cache_stats(state: St) -> serde_json::Value {
     let st = state.lock().unwrap();
     cache_stats_json(&st)
+}
+
+// ─── GPU status (A2.4 — Settings "Graphics", the honest adapter rows) ──────
+
+/// One enumerated adapter, scored + flagged (A4: the picker and the
+/// "why unavailable" rows are the same data).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuAdapterJson {
+    pub name: String,
+    pub vendor: u32,
+    pub backend: String,
+    pub device_type: String,
+    /// The A4 Auto score (device-type rank ×100 + backend rank).
+    pub score: u32,
+    /// Stable identity persisted in Settings (`gpu_adapter`).
+    pub fingerprint: String,
+    /// Bound to the live shared context (what renders today).
+    pub active: bool,
+    /// Matches the Settings policy (auto = the score winner).
+    pub selected: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuStatusJson {
+    /// "auto" | "specific" (from Settings).
+    pub mode: String,
+    pub gpu_enabled: bool,
+    /// Session circuit breaker state + the honest reason (never silent).
+    pub session_disabled: bool,
+    pub reason: Option<String>,
+    /// The adapter the shared context is bound to (None = CPU-only
+    /// right now — see `reason`).
+    pub active_adapter: Option<GpuAdapterJson>,
+    /// Every adapter, best-first (the picker order).
+    pub adapters: Vec<GpuAdapterJson>,
+    /// Last uncaptured device error (diagnostics; may predate a reset).
+    pub uncaptured_error: Option<String>,
+}
+
+fn gpu_adapter_json(
+    r: &melography_gpu::AdapterReport,
+    score: u32,
+    active_fp: Option<&str>,
+    selected_fp: &str,
+) -> GpuAdapterJson {
+    let fingerprint = melography_gpu::context::adapter_fingerprint(r);
+    GpuAdapterJson {
+        name: r.name.clone(),
+        vendor: r.vendor,
+        backend: r.backend.clone(),
+        device_type: r.device_type.clone(),
+        score,
+        active: active_fp == Some(fingerprint.as_str()),
+        selected: fingerprint == selected_fp,
+        fingerprint,
+    }
+}
+
+#[tauri::command]
+pub fn gpu_status(state: St) -> GpuStatusJson {
+    let st = state.lock().unwrap();
+    let mode = if st.settings.gpu_adapter == "auto" {
+        "auto"
+    } else {
+        "specific"
+    };
+    let selected_fp = if mode == "auto" {
+        // Auto selects the score winner — mark that row.
+        String::new()
+    } else {
+        st.settings.gpu_adapter.clone()
+    };
+    let ranked = melography_gpu::context::ranked_adapters();
+    let auto_fp = ranked
+        .first()
+        .map(melography_gpu::context::adapter_fingerprint)
+        .unwrap_or_default();
+    let selected_fp = if selected_fp.is_empty() { auto_fp } else { selected_fp };
+    let active_fp = melography_gpu::context::global()
+        .map(|c| melography_gpu::context::adapter_fingerprint(&c.report));
+    let adapters: Vec<GpuAdapterJson> = ranked
+        .iter()
+        .map(|r| {
+            gpu_adapter_json(
+                r,
+                melography_gpu::context::adapter_score(r),
+                active_fp.as_deref(),
+                &selected_fp,
+            )
+        })
+        .collect();
+    let active_adapter = active_fp.as_ref().and_then(|fp| {
+        melography_gpu::context::global().map(|c| {
+            gpu_adapter_json(&c.report, melography_gpu::context::adapter_score(&c.report), None, fp)
+        })
+    });
+    GpuStatusJson {
+        mode: mode.into(),
+        gpu_enabled: st.gpu.user_enabled(),
+        session_disabled: st.gpu.session_disabled(),
+        reason: st.gpu.reason().map(str::to_string),
+        active_adapter,
+        adapters,
+        uncaptured_error: melography_gpu::context::last_uncaptured_error(),
+    }
 }
 
 // ─── Recents (M4 #23, UX_SPEC §3 S1 Home) ───────────────────────────────────
@@ -1188,13 +1307,22 @@ pub struct StockThumbJson {
 
 #[tauri::command]
 pub fn stock_thumbs(state: St, max_dim: u32) -> Result<Vec<StockThumbJson>, AppError> {
-    let st = state.lock().unwrap();
-    let Some(session) = st.session.as_ref() else {
+    let mut st = state.lock().unwrap();
+    // A2.4: disjoint field borrows (immutable session/stocks/tone +
+    // mutable gpu) through one guard deref — see render_preview.
+    let EditorState {
+        session,
+        stocks,
+        tone,
+        gpu,
+        ..
+    } = &mut *st;
+    let Some(session) = session.as_ref() else {
         return Ok(Vec::new()); // no session = empty filmstrip, not an error
     };
     let max_dim = max_dim.clamp(48, 256);
-    let mut out = Vec::with_capacity(st.stocks.len());
-    for stock in &st.stocks {
+    let mut out = Vec::with_capacity(stocks.len());
+    for stock in stocks.iter() {
         // Default-adjustments film leg for this stock (the same resolve
         // path the preview uses, with factory knobs).
         let defaults = melography_film::Adjustments::default();
@@ -1220,8 +1348,9 @@ pub fn stock_thumbs(state: St, max_dim: u32) -> Result<Vec<StockThumbJson>, AppE
             &mut crate::cache::PreviewCacheState::new(0),
             &[],
             Some(&leg),
-            st.tone.params.as_ref(),
+            tone.params.as_ref(),
             max_dim,
+            gpu,
         )
         .map_err(AppError::from)?;
         let mut url = String::with_capacity(frame.rgba.len() * 4 / 3 + 32);

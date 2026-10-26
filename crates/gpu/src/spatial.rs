@@ -31,15 +31,18 @@
 //! Layering mirrors `film_pixel`/`lut3d`: this module takes plain data
 //! (no `melography-film` dependency); the parity *tests* own the CPU
 //! reference and the verdict. Adapter-less environments get an honest
-//! `NoAdapter` error. A fresh instance/adapter/device per call (the
-//! harness pattern — the app-wiring step owns the persistent context
-//! and the preview-budget measurement).
+//! `NoAdapter` error. The standalone `run_*` acquire a fresh
+//! instance/adapter/device per call (the parity-harness pattern); the
+//! A2.4 `run_*_on` variants dispatch over the caller's persistent
+//! [`GpuContext`](crate::context::GpuContext) with cached pipelines —
+//! the preview path.
 
+use crate::context::{compute_pipeline, read_back, AcquiredDevice, GpuContext};
 use crate::spatial_types::{pack_grain, pack_halation, GrainGpuParams, HalationGpuParams};
 use crate::GpuError;
 use wgpu::util::DeviceExt;
 
-const GRAIN_SHADER: &str = r#"
+pub(crate) const GRAIN_SHADER: &str = r#"
 // Grain gather — WGSL mirror of the CPU full model (FILM_MODEL §G).
 // One invocation per output pixel: pixel-area supersampled gather over
 // the hashed lattice cells whose bumps cover each sub-sample.
@@ -290,7 +293,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
-const HALATION_H_SHADER: &str = r#"
+pub(crate) const HALATION_H_SHADER: &str = r#"
 // Halation §C2, horizontal pass: out[c][y][x] = Σ_i taps_c[i]·src[c][y][x+i−r],
 // zero padding beyond the frame (tile-safe, the CPU contract). Only
 // active channels (radius > 0) are written; the vertical pass reads
@@ -331,10 +334,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
-const HALATION_V_SHADER: &str = r#"
-// Halation §C2, vertical pass + additive halo:
-// dst[c] = src[c] + α_c · Σ_j taps_c[j]·tmp[c][y+j−r] (zero padding),
-// pass-through for inactive channels (the CPU apply_halation skip).
+pub(crate) const HALATION_V_SHADER: &str = r#"
+// Halation §C2, vertical pass + combine (A2.4: two modes, per channel):
+//   additive (halation): dst[c] = src[c] + α_c · Σ_j taps_c[j]·tmp[c][y+j−r]
+//   blend (veiling §B):  dst[c] = (1−α_c)·src[c] + α_c · Σ_j taps_c[j]·tmp[...]
+// (zero padding; pass-through for inactive channels — the CPU
+// apply_halation / apply_veiling_mix formulas, selected by params[0]
+// bit c: 0 = halation, 1 = veiling blend. Halation payloads pack 0 —
+// the additive expression is byte-identical to the pre-A2.4 shader.)
 @group(0) @binding(0) var<storage, read> params: array<f32>;
 @group(0) @binding(1) var<storage, read> src: array<f32>;
 @group(0) @binding(2) var<storage, read> tmp: array<f32>;
@@ -346,6 +353,7 @@ fn imgH() -> u32 { return u32At(2u); }
 fn chanRadius(c: u32) -> u32 { return u32At(3u + c); }
 fn tapOff(c: u32) -> u32 { return u32At(6u + c); }
 fn chanAlpha(c: u32) -> f32 { return params[9u + c]; }
+fn blendMode(c: u32) -> u32 { return (u32At(0u) >> c) & 1u; }
 const TAPS_BASE: u32 = 12u;
 
 @compute @workgroup_size(64)
@@ -372,7 +380,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (sy < 0 || sy >= hi) { continue; }
             halo = halo + params[base + tj] * tmp[(u32(sy) * w + x) * 3u + c];
         }
-        dst[i3] = src[i3] + chanAlpha(c) * halo;
+        if (blendMode(c) == 1u) {
+            // Veiling §B — the CPU apply_veiling_mix formula.
+            dst[i3] = (1.0 - chanAlpha(c)) * src[i3] + chanAlpha(c) * halo;
+        } else {
+            // Halation §C2 — additive halo (unchanged expression).
+            dst[i3] = src[i3] + chanAlpha(c) * halo;
+        }
     }
 }
 "#;
@@ -382,71 +396,33 @@ pub fn first_adapter_report() -> Option<crate::AdapterReport> {
     crate::readback::best_adapter()
 }
 
-struct GpuCtx {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-}
-
-fn acquire() -> Result<GpuCtx, GpuError> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .map_err(|_| GpuError::NoAdapter)?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-            .map_err(|e| GpuError::Wgpu(e.to_string()))?;
-    Ok(GpuCtx { device, queue })
-}
-
-fn compute_pipeline(device: &wgpu::Device, label: &str, code: &str) -> wgpu::ComputePipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(code.into()),
-    });
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some(label),
-        layout: None,
-        module: &module,
-        entry_point: None,
-        compilation_options: Default::default(),
-        cache: None,
-    })
-}
-
-fn read_back(device: &wgpu::Device, readback: &wgpu::Buffer) -> Result<Vec<f32>, GpuError> {
-    // Two-buffer readback idiom (S1 lesson — see lut3d.rs).
-    let slice = readback.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |r| {
-        let _ = tx.send(r);
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .map_err(|e| GpuError::Wgpu(e.to_string()))?;
-    rx.recv()
-        .map_err(|_| GpuError::Wgpu("map channel closed".into()))?
-        .map_err(|e| GpuError::Wgpu(e.to_string()))?;
-    let floats: Vec<f32> = {
-        let data = slice
-            .get_mapped_range()
-            .map_err(|e| GpuError::Wgpu(e.to_string()))?;
-        bytemuck::cast_slice(&data).to_vec()
-    };
-    readback.unmap();
-    Ok(floats)
-}
 
 /// Run the grain-gather kernel on `src` (interleaved RGB f32, `w·h·3`).
 /// Returns the grained plane (same layout). No adapter → honest
 /// `NoAdapter`.
 pub fn run_grain(params: &GrainGpuParams, src: &[f32]) -> Result<Vec<f32>, GpuError> {
+    let ctx = AcquiredDevice::acquire()?;
+    let pipeline = compute_pipeline(&ctx.device, "grain-gather", GRAIN_SHADER);
+    grain_dispatch(&ctx.device, &ctx.queue, &pipeline, params, src)
+}
+
+/// A2.4 — persistent-context variant: the pipeline comes from the
+/// context cache (compiled once per device, not per call).
+pub fn run_grain_on(
+    ctx: &GpuContext,
+    params: &GrainGpuParams,
+    src: &[f32],
+) -> Result<Vec<f32>, GpuError> {
+    grain_dispatch(&ctx.device, &ctx.queue, &ctx.pipelines.grain, params, src)
+}
+
+fn grain_dispatch(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pipeline: &wgpu::ComputePipeline,
+    params: &GrainGpuParams,
+    src: &[f32],
+) -> Result<Vec<f32>, GpuError> {
     let packed = pack_grain(params).map_err(GpuError::Wgpu)?;
     let n = params.w as usize * params.h as usize;
     let out_len = n * 3;
@@ -460,50 +436,44 @@ pub fn run_grain(params: &GrainGpuParams, src: &[f32]) -> Result<Vec<f32>, GpuEr
         )));
     }
 
-    let ctx = acquire()?;
-    let params_buf = ctx
-        .device
+    let params_buf = device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("grain-params"),
             contents: bytemuck::cast_slice(&packed),
             usage: wgpu::BufferUsages::STORAGE,
         });
-    let upos_buf = ctx
-        .device
+    let upos_buf = device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("grain-upos"),
             contents: bytemuck::cast_slice(&params.u_pos),
             usage: wgpu::BufferUsages::STORAGE,
         });
-    let vpos_buf = ctx
-        .device
+    let vpos_buf = device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("grain-vpos"),
             contents: bytemuck::cast_slice(&params.v_pos),
             usage: wgpu::BufferUsages::STORAGE,
         });
-    let src_buf = ctx
-        .device
+    let src_buf = device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("grain-src"),
             contents: bytemuck::cast_slice(src),
             usage: wgpu::BufferUsages::STORAGE,
         });
-    let out_storage = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+    let out_storage = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("grain-out"),
         size: (out_len * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    let out_readback = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+    let out_readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("grain-out-readback"),
         size: (out_len * 4) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
 
-    let pipeline = compute_pipeline(&ctx.device, "grain-gather", GRAIN_SHADER);
-    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("grain-bg"),
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
@@ -530,8 +500,7 @@ pub fn run_grain(params: &GrainGpuParams, src: &[f32]) -> Result<Vec<f32>, GpuEr
         ],
     });
 
-    let mut encoder = ctx
-        .device
+    let mut encoder = device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("grain-encoder"),
         });
@@ -545,15 +514,52 @@ pub fn run_grain(params: &GrainGpuParams, src: &[f32]) -> Result<Vec<f32>, GpuEr
         pass.dispatch_workgroups((n as u32).div_ceil(64), 1, 1);
     }
     encoder.copy_buffer_to_buffer(&out_storage, 0, &out_readback, 0, out_readback.size());
-    ctx.queue.submit(Some(encoder.finish()));
+    queue.submit(Some(encoder.finish()));
 
-    read_back(&ctx.device, &out_readback)
+    read_back(device, &out_readback)
 }
 
 /// Run the halation kernel (two dispatches: horizontal then vertical)
 /// on `src` (interleaved RGB f32, `w·h·3`). Returns `X + H(X)` per the
 /// CPU `apply_halation`. No adapter → honest `NoAdapter`.
 pub fn run_halation(params: &HalationGpuParams, src: &[f32]) -> Result<Vec<f32>, GpuError> {
+    let ctx = AcquiredDevice::acquire()?;
+    let h_pipeline = compute_pipeline(&ctx.device, "halation-h", HALATION_H_SHADER);
+    let v_pipeline = compute_pipeline(&ctx.device, "halation-v", HALATION_V_SHADER);
+    halation_dispatch(
+        &ctx.device,
+        &ctx.queue,
+        &h_pipeline,
+        &v_pipeline,
+        params,
+        src,
+    )
+}
+
+/// A2.4 — persistent-context variant (cached pipelines).
+pub fn run_halation_on(
+    ctx: &GpuContext,
+    params: &HalationGpuParams,
+    src: &[f32],
+) -> Result<Vec<f32>, GpuError> {
+    halation_dispatch(
+        &ctx.device,
+        &ctx.queue,
+        &ctx.pipelines.halation_h,
+        &ctx.pipelines.halation_v,
+        params,
+        src,
+    )
+}
+
+fn halation_dispatch(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    h_pipeline: &wgpu::ComputePipeline,
+    v_pipeline: &wgpu::ComputePipeline,
+    params: &HalationGpuParams,
+    src: &[f32],
+) -> Result<Vec<f32>, GpuError> {
     let packed = pack_halation(params).map_err(GpuError::Wgpu)?;
     let n = params.w as usize * params.h as usize;
     let out_len = n * 3;
@@ -567,43 +573,38 @@ pub fn run_halation(params: &HalationGpuParams, src: &[f32]) -> Result<Vec<f32>,
         )));
     }
 
-    let ctx = acquire()?;
-    let params_buf = ctx
-        .device
+    let params_buf = device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("halation-params"),
             contents: bytemuck::cast_slice(&packed),
             usage: wgpu::BufferUsages::STORAGE,
         });
-    let src_buf = ctx
-        .device
+    let src_buf = device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("halation-src"),
             contents: bytemuck::cast_slice(src),
             usage: wgpu::BufferUsages::STORAGE,
         });
-    let tmp = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+    let tmp = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("halation-tmp"),
         size: (out_len * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    let out_storage = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+    let out_storage = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("halation-out"),
         size: (out_len * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    let out_readback = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+    let out_readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("halation-out-readback"),
         size: (out_len * 4) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
 
-    let h_pipeline = compute_pipeline(&ctx.device, "halation-h", HALATION_H_SHADER);
-    let v_pipeline = compute_pipeline(&ctx.device, "halation-v", HALATION_V_SHADER);
-    let h_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let h_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("halation-h-bg"),
         layout: &h_pipeline.get_bind_group_layout(0),
         entries: &[
@@ -621,7 +622,7 @@ pub fn run_halation(params: &HalationGpuParams, src: &[f32]) -> Result<Vec<f32>,
             },
         ],
     });
-    let v_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let v_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("halation-v-bg"),
         layout: &v_pipeline.get_bind_group_layout(0),
         entries: &[
@@ -644,8 +645,7 @@ pub fn run_halation(params: &HalationGpuParams, src: &[f32]) -> Result<Vec<f32>,
         ],
     });
 
-    let mut encoder = ctx
-        .device
+    let mut encoder = device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("halation-encoder"),
         });
@@ -668,9 +668,9 @@ pub fn run_halation(params: &HalationGpuParams, src: &[f32]) -> Result<Vec<f32>,
         pass.dispatch_workgroups((n as u32).div_ceil(64), 1, 1);
     }
     encoder.copy_buffer_to_buffer(&out_storage, 0, &out_readback, 0, out_readback.size());
-    ctx.queue.submit(Some(encoder.finish()));
+    queue.submit(Some(encoder.finish()));
 
-    read_back(&ctx.device, &out_readback)
+    read_back(device, &out_readback)
 }
 
 #[cfg(all(test, feature = "wgpu"))]

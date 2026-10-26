@@ -248,6 +248,52 @@ the §4 re-pin for the GPU side happens there, as with A2.1/A2.2.
 context, full-chain GPU preview composition (pixel kernel + spatial
 kernels + vignette), adapter policy (A4) and the fallback contract.
 
+**Progress (session 20, A2.4 — full-chain GPU preview wiring):** shipped.
+The A2.3 "next step" above, end to end. `melography-gpu::context` owns
+the persistent `GpuContext` — one device + queue + every pipeline
+compiled once, in a process-wide slot, plus the A4 adapter *policy*
+(`Auto`: device-type rank Discrete>Integrated>Virtual>Other>Cpu ×100 +
+backend preference Vulkan>Dx12>Metal>Gl; `ByFingerprint` pins the
+Settings pick and fails honestly when absent — never a silent
+wrong-adapter render) and an uncaptured-error slot that parks device
+errors for `gpu_status` instead of panicking the render thread. Two
+kernel additions complete the chain: the **vignette** kernel (per-
+column/row `u−c`/`v−c` mm LUTs — the A2.3 small-numbers-only lesson;
+f32 cross-check 2.2e-7) and the **veiling** bloom as the halation h+v
+dispatch in a new *blend* combine (`(1−α)·src + α·G`, the exact CPU
+`apply_veiling_mix` formula; params slot [0], halation payloads pack 0
+and keep the additive expression byte-identical). The film_pixel
+kernel was stage-split (flags bits 4–6: excitation / response / print
+dispatches of the same shader, f32 buffer round-trips lossless ⇒
+split ≡ fused gated BIT-EXACT) so the spatial kernels interleave at
+exactly the CPU strip positions: vignette → veiling → excitation →
+halation → response → grain (FULL §G model — GPU preview grain is
+full-quality; the A2.2 fast field stays the no-adapter CPU leg) →
+print. `melography-film::gpu_chain::render_gpu` (feature `gpu-chain`)
+sequences it over the caller's context; the preview leg in the app
+tries GPU first and falls back to the threaded fast-grain CPU leg per
+frame on any miss/error — never blocks, never surfaces a GPU error to
+the user. Fallback contract (app `GpuRuntime`): no adapter → CPU for
+the session (reason surfaced); pinned adapter absent → CPU with the
+honest reason; 3 consecutive render failures → session circuit
+breaker (re-armed by an adapter change in Settings or a restart).
+Parity gates (`gpu_chain_parity`, runs in the workspace suite via the
+self-dev-dep M0 pattern): full chain vs the CPU monolithic render ≤
+2e-3 (each constituent kernel holds 1e-3 standalone; the composition
+doubles the budget for nonlinear accumulation — every number printed)
+for all stocks all-stages-on, per-stage-off isolation, tall-image k
+regimes, determinism bit-equal, disabled-film identity, honest
+adapter-less skip; the split≡fused bit-exact gate lives in the
+film crate's unit tests. Perf leg `gpu_chain_perf` (#[ignore]d,
+owner-run release: context-init cold line + 2048×1536 + 6000×4000 per
+stock, GPU vs CPU-threaded-fast on the same image) — the §4 re-pin
+evidence. App UI: Settings ▸ Performance gains the adapter picker
+(Auto + every enumerated adapter with backend/device-type labels) and
+the honest status line (active adapter / CPU + reason); `gpu_status`
+is the wire command (ipc-contract-gated); `Settings.gpu_adapter`
+persists the pick ("auto" default). A4's remaining leg — the local
+diagnostics view (probe timings, render telemetry) — stays open.
+
 **A2 · Film-chain preview speed (the measured 3.4–4.4 s vs ≤ 50 ms / 400 ms
 budget — executing the M2 §5 plan in spec order).**
 1. **Strip threading** — embarrassingly parallel; the tiled≡mono gate already
@@ -383,7 +429,7 @@ reference — measured 2026-10-26 after PRs #37/#38).
 | Line | M2 evidence (worst/best stock) | Status |
 |---|---|---|
 | Film resolve (per param change, incl. grain self-calibration) | owner 12-core: full 0.8–2.9 ms · fast-path 4.0–5.4 ms (incl. its one-shot self-calibration) | fine — cached per param set; the fast path's extra ~2–4 ms is one-shot per param set, ≪ the render it precedes |
-| Preview re-render p50 (2048×1536, full film chain) | owner 12-core, A2.1+A2.2: sequential 2.8–3.8 s → threaded 0.49–0.58 s → fast grain 0.32–0.47 s vs ≤ 50 ms interactions / ≤ 400 ms cold | **A2.1+A2.2 shipped = 7–10× total; 2/5 stocks inside the ≤ 400 ms cold budget, worst +18 % (cool-800-night 473 ms) — A2.3 kernels shipped (parity-gated); the full-chain GPU preview wiring is the remaining plan leg** |
+| Preview re-render p50 (2048×1536, full film chain) | owner 12-core, A2.1+A2.2: sequential 2.8–3.8 s → threaded 0.49–0.58 s → fast grain 0.32–0.47 s vs ≤ 50 ms interactions / ≤ 400 ms cold | **A2.1+A2.2 shipped = 7–10× total; 2/5 stocks inside the ≤ 400 ms cold budget, worst +18 % (cool-800-night 473 ms) — A2.3 kernels + the A2.4 full-chain GPU preview wiring shipped (parity-gated ≤ 2e-3); the GPU §4 re-pin awaits the owner-run `gpu_chain_perf` leg (CPU numbers above stay the fallback reference)** |
 | Export 24 MP (full film chain, CPU, tiled strips) | owner 12-core: 7.2–14.8 s vs ≤ 20 s CPU | **within budget** (sequential by design, R-REN-2 memory-first) |
 | §L statistical gates (grain RMS/PSD/ρ, halation edge-spread, zoom, determinism, tiled≡mono) | all green; 2 real seam bugs caught + fixed by the tiled gate | **M2 exit criterion met** |
 | GPU film pixel-kernel parity (5 stocks × 3 paths × 2 polarities × 2 layouts) + spatial kernels (A2.3) | pixel gate ≤ 1e-3 on CI adapters (macos/windows); spatial (grain gather k∈{1,2,4} + halation cases + determinism) same gate since session 18 | pixel scope green; **spatial green (A2.3)** |

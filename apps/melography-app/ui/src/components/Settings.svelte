@@ -6,13 +6,25 @@
    *  store; language + theme apply live. */
   import { onMount } from "svelte";
   import { t, setLang, locale, type Lang } from "../lib/i18n";
-  import { settings, toast, type AppSettings } from "../lib/stores";
-  import { getSettings, setSettings } from "../lib/ipc";
+  import { settings, toast, type AppSettings, type GpuStatus } from "../lib/stores";
+  import { getSettings, setSettings, gpuStatus } from "../lib/ipc";
   import { applyTheme } from "../lib/theme";
 
   export let open = false;
 
   let draft: AppSettings | null = null;
+  /** A2.4 Graphics: the honest adapter rows (auto pick + explicit +
+   *  why-unavailable), refreshed whenever the panel opens. */
+  let gpu: GpuStatus | null = null;
+
+  async function refreshGpu() {
+    try {
+      gpu = await gpuStatus();
+    } catch (e) {
+      console.error(e);
+      gpu = null;
+    }
+  }
 
   async function refresh() {
     try {
@@ -48,7 +60,10 @@
   }
 
   onMount(refresh);
-  $: if (open) refresh();
+  $: if (open) {
+    refresh();
+    refreshGpu();
+  }
   $: locale; // re-render translated labels on language switch
 
   // Esc via the window (#15 a11y): works regardless of what holds focus.
@@ -132,6 +147,41 @@
             />
           </label>
           <p class="note">{t("settings.gpuNote")}</p>
+          {#if gpu}
+            <label class="row" title={t("settings.gpuAdapter.tip")}>
+              <span>{t("settings.gpuAdapter")}</span>
+              <select
+                value={field("gpu_adapter")}
+                on:change={(e) => setField("gpu_adapter", e.currentTarget.value)}
+              >
+                <option value="auto">{t("settings.gpuAdapter.auto")}</option>
+                {#each gpu.adapters as a}
+                  <option value={a.fingerprint}>
+                    {a.name} — {a.backend} ({a.deviceType})
+                  </option>
+                {/each}
+              </select>
+            </label>
+            <p class="note">
+              {#if !gpu.gpuEnabled}
+                {t("settings.gpuStatus.cpuDisabled")}
+              {:else if gpu.adapters.length === 0}
+                {t("settings.gpuStatus.cpuNoAdapter")}
+              {:else if gpu.activeAdapter}
+                {t("settings.gpuStatus.active", {
+                  name: gpu.activeAdapter.name,
+                  backend: gpu.activeAdapter.backend,
+                })}
+              {:else}
+                {t("settings.gpuStatus.cpuPending")}
+              {/if}
+              {#if gpu.sessionDisabled && gpu.reason}
+                {t("settings.gpuStatus.reason", { reason: gpu.reason })}
+              {/if}
+            </p>
+          {:else}
+            <p class="note">{t("settings.gpuStatus.cpuNoAdapter")}</p>
+          {/if}
         </section>
 
         <section>
