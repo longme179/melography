@@ -136,7 +136,10 @@ impl GpuContext {
                 .into_iter()
                 .find(|a| {
                     let i = a.get_info();
-                    format!("{}|{}|{:?}|{:?}", i.name, i.vendor, i.backend, i.device_type) == *fp
+                    format!(
+                        "{}|{}|{:?}|{:?}",
+                        i.name, i.vendor, i.backend, i.device_type
+                    ) == *fp
                 })
                 .ok_or_else(|| GpuError::Wgpu(format!("adapter not present: {fp}")))?,
         };
@@ -164,16 +167,8 @@ impl GpuContext {
                 "film-pixel",
                 crate::film_pixel::FILM_PIXEL_SHADER,
             ),
-            halation_h: compute_pipeline(
-                &device,
-                "halation-h",
-                crate::spatial::HALATION_H_SHADER,
-            ),
-            halation_v: compute_pipeline(
-                &device,
-                "halation-v",
-                crate::spatial::HALATION_V_SHADER,
-            ),
+            halation_h: compute_pipeline(&device, "halation-h", crate::spatial::HALATION_H_SHADER),
+            halation_v: compute_pipeline(&device, "halation-v", crate::spatial::HALATION_V_SHADER),
             grain: compute_pipeline(&device, "grain-gather", crate::spatial::GRAIN_SHADER),
             vignette: compute_pipeline(&device, "vignette", crate::vignette::VIGNETTE_SHADER),
         };
@@ -201,14 +196,13 @@ impl AcquiredDevice {
             backends: wgpu::Backends::all(),
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-                apply_limit_buckets: false,
-            }))
-            .map_err(|_| GpuError::NoAdapter)?;
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            apply_limit_buckets: false,
+        }))
+        .map_err(|_| GpuError::NoAdapter)?;
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
                 .map_err(|e| GpuError::Wgpu(e.to_string()))?;
@@ -226,11 +220,7 @@ static LAST_UNCAPTURED: Mutex<Option<String>> = Mutex::new(None);
 
 /// The shared context, if one has been initialized.
 pub fn global() -> Option<Arc<GpuContext>> {
-    GLOBAL
-        .read()
-        .unwrap()
-        .as_ref()
-        .map(|e| Arc::clone(&e.ctx))
+    GLOBAL.read().unwrap().as_ref().map(|e| Arc::clone(&e.ctx))
 }
 
 /// Initialize (or reuse) the shared context for `policy`. Reuse only
@@ -288,7 +278,10 @@ pub(crate) fn compute_pipeline(
 }
 
 /// Shared two-buffer readback idiom (S1 lesson — see lut3d.rs).
-pub(crate) fn read_back(device: &wgpu::Device, readback: &wgpu::Buffer) -> Result<Vec<f32>, GpuError> {
+pub(crate) fn read_back(
+    device: &wgpu::Device,
+    readback: &wgpu::Buffer,
+) -> Result<Vec<f32>, GpuError> {
     let slice = readback.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
     slice.map_async(wgpu::MapMode::Read, move |r| {

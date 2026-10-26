@@ -74,18 +74,28 @@ fn gpu_full_chain_perf() {
         }
         Err(e) => panic!("gpu context init failed: {e}"),
     };
-    println!("context-init (cold, once): {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
+        "context-init (cold, once): {:.1} ms",
+        t0.elapsed().as_secs_f64() * 1000.0
+    );
+    println!(
     println!(
         "adapter: {} ({}, {})",
         ctx.report.name, ctx.report.backend, ctx.report.device_type
     );
-    println!("machine: {} cores", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0));
+    println!(
+        "machine: {} cores",
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0)
+    );
 
     let reg =
         melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
 
-    for (w, h, label) in [(2048u32, 1536u32, "preview-2048x1536"), (6000, 4000, "export-6000x4000")]
-    {
+    for (w, h, label) in [
+        (2048u32, 1536u32, "preview-2048x1536"),
+        (6000, 4000, "export-6000x4000"),
+    ] {
         let img = test_image(w, h);
         for stock in &reg.profiles {
             let params = FilmChainParams::new(stock.clone())

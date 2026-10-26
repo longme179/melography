@@ -1059,7 +1059,11 @@ pub fn gpu_status(state: St) -> GpuStatusJson {
         .first()
         .map(melography_gpu::context::adapter_fingerprint)
         .unwrap_or_default();
-    let selected_fp = if selected_fp.is_empty() { auto_fp } else { selected_fp };
+    let selected_fp = if selected_fp.is_empty() {
+        auto_fp
+    } else {
+        selected_fp
+    };
     let active_fp = melography_gpu::context::global()
         .map(|c| melography_gpu::context::adapter_fingerprint(&c.report));
     let adapters: Vec<GpuAdapterJson> = ranked
@@ -1075,7 +1079,12 @@ pub fn gpu_status(state: St) -> GpuStatusJson {
         .collect();
     let active_adapter = active_fp.as_ref().and_then(|fp| {
         melography_gpu::context::global().map(|c| {
-            gpu_adapter_json(&c.report, melography_gpu::context::adapter_score(&c.report), None, fp)
+            gpu_adapter_json(
+                &c.report,
+                melography_gpu::context::adapter_score(&c.report),
+                None,
+                fp,
+            )
         })
     });
     GpuStatusJson {

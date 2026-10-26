@@ -418,7 +418,10 @@ mod tests {
         assert_eq!(p[6 + 4], -12.0, "dv[0]");
         assert_eq!(p[6 + 4 + 2], 12.0, "dv[2]");
         // Length contract: du must match w, dv must match h.
-        let bad = VignetteGpuParams { dv: vec![0.0], ..v.clone() };
+        let bad = VignetteGpuParams {
+            dv: vec![0.0],
+            ..v.clone()
+        };
         assert!(pack_vignette(&bad).is_err());
     }
 }

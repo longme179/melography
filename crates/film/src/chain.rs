@@ -92,7 +92,7 @@ impl FilmChainParams {
     pub fn with_adjustments(
         mut self,
         adjustments: Adjustments,
-        pub(crate) lens: LensParams,
+        lens: LensParams,
     ) -> Result<Self, ChainError> {
         self.adjustments = adjustments;
         self.lens = lens;

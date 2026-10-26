@@ -114,6 +114,9 @@ pub fn pack_halation_gpu_params(em: &Emulsion, w: u32, h: u32) -> HalationGpuPar
         alpha,
         radius,
         tap_offset,
+        // Halation is the additive combine (blend = false); only the
+        // A2.4 veiling pack opts into the blend mode.
+        blend: [false; 3],
         taps,
     }
 }

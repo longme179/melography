@@ -396,7 +396,6 @@ pub fn first_adapter_report() -> Option<crate::AdapterReport> {
     crate::readback::best_adapter()
 }
 
-
 /// Run the grain-gather kernel on `src` (interleaved RGB f32, `w·h·3`).
 /// Returns the grained plane (same layout). No adapter → honest
 /// `NoAdapter`.
@@ -436,30 +435,26 @@ fn grain_dispatch(
         )));
     }
 
-    let params_buf = device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain-params"),
-            contents: bytemuck::cast_slice(&packed),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-    let upos_buf = device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain-upos"),
-            contents: bytemuck::cast_slice(&params.u_pos),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-    let vpos_buf = device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain-vpos"),
-            contents: bytemuck::cast_slice(&params.v_pos),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-    let src_buf = device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain-src"),
-            contents: bytemuck::cast_slice(src),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+    let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("grain-params"),
+        contents: bytemuck::cast_slice(&packed),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let upos_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("grain-upos"),
+        contents: bytemuck::cast_slice(&params.u_pos),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let vpos_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("grain-vpos"),
+        contents: bytemuck::cast_slice(&params.v_pos),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let src_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("grain-src"),
+        contents: bytemuck::cast_slice(src),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let out_storage = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("grain-out"),
         size: (out_len * 4) as u64,
@@ -473,7 +468,7 @@ fn grain_dispatch(
         mapped_at_creation: false,
     });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("grain-bg"),
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
@@ -500,10 +495,9 @@ fn grain_dispatch(
         ],
     });
 
-    let mut encoder = device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("grain-encoder"),
-        });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("grain-encoder"),
+    });
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("grain-pass"),
@@ -573,18 +567,16 @@ fn halation_dispatch(
         )));
     }
 
-    let params_buf = device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("halation-params"),
-            contents: bytemuck::cast_slice(&packed),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-    let src_buf = device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("halation-src"),
-            contents: bytemuck::cast_slice(src),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+    let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("halation-params"),
+        contents: bytemuck::cast_slice(&packed),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let src_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("halation-src"),
+        contents: bytemuck::cast_slice(src),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let tmp = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("halation-tmp"),
         size: (out_len * 4) as u64,
@@ -645,10 +637,9 @@ fn halation_dispatch(
         ],
     });
 
-    let mut encoder = device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("halation-encoder"),
-        });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("halation-encoder"),
+    });
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("halation-h-pass"),

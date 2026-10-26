@@ -191,7 +191,10 @@ mod tests {
         rt.note_failure("synthetic failure 1".into());
         rt.note_failure("synthetic failure 2".into());
         rt.note_failure("synthetic failure 3".into());
-        assert!(rt.session_disabled(), "3 consecutive failures open the breaker");
+        assert!(
+            rt.session_disabled(),
+            "3 consecutive failures open the breaker"
+        );
         // Switching adapters re-arms everything.
         rt.sync_from_settings(&settings("X|4098|Metal|Discrete", true));
         assert!(!rt.session_disabled());
@@ -206,7 +209,10 @@ mod tests {
         rt.note_failure("b".into());
         rt.consecutive_failures = 0; // a success did this
         rt.note_failure("c".into());
-        assert!(!rt.session_disabled(), "1 failure after a success must not trip");
+        assert!(
+            !rt.session_disabled(),
+            "1 failure after a success must not trip"
+        );
     }
 
     #[test]
