@@ -424,6 +424,7 @@ mod tests {
             );
             let _ = (dmin, dmax);
         }
+    }
 
     /// The leg image (the battery's test image, reused verbatim).
     fn leg_image(w: u32, h: u32, tint: f64) -> melography_core::ImageF32 {
