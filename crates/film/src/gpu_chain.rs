@@ -172,8 +172,8 @@ mod tests {
             }
             Err(e) => panic!("gpu context init failed: {e}"),
         };
-        let reg =
-            melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
+        let reg = melography_presets::StockRegistry::open(&repo_root().join("profiles"))
+            .expect("profiles");
         let stock = reg.by_id("soft-pastel-160").expect("pastel stock");
         let img = test_image(96, 72, 0.03);
         // Spatial stages off keeps the split path pure pixel math.

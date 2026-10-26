@@ -74,10 +74,10 @@ fn gpu_full_chain_perf() {
         }
         Err(e) => panic!("gpu context init failed: {e}"),
     };
+    println!(
         "context-init (cold, once): {:.1} ms",
         t0.elapsed().as_secs_f64() * 1000.0
     );
-    println!(
     println!(
         "adapter: {} ({}, {})",
         ctx.report.name, ctx.report.backend, ctx.report.device_type
@@ -89,8 +89,8 @@ fn gpu_full_chain_perf() {
             .unwrap_or(0)
     );
 
-    let reg =
-        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
+    let reg = melography_presets::StockRegistry::open(&repo_root().join("profiles"))
+        .expect("profiles");
 
     for (w, h, label) in [
         (2048u32, 1536u32, "preview-2048x1536"),

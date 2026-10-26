@@ -115,7 +115,7 @@ impl GpuRuntime {
             return None;
         }
         let ctx = match melography_gpu::context::init(&self.policy) {
-            Ok(c) => c,
+            Ok(c) => Some(c),
             Err(melography_gpu::GpuError::NoAdapter) => {
                 // A state, not a failure: disable for the session with
                 // the honest reason.
@@ -135,7 +135,7 @@ impl GpuRuntime {
                     return None;
                 }
                 self.note_failure(msg.clone());
-                Some(Err(msg))
+                return Some(Err(msg));
             }
         }?;
         match melography_film::gpu_chain::render_gpu(img, params, &ctx) {

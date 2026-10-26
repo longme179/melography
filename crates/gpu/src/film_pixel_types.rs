@@ -201,6 +201,7 @@ mod tests {
             scanner_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             hd_curves: vec![curve(4)],
             paper_curves: vec![curve(5)],
+            stage: 7,
         };
         let packed = pack(&p).unwrap();
         // 59 fixed + 3·(3·n_hd) + 3·(3·n_pp)
