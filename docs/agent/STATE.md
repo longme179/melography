@@ -65,8 +65,12 @@ presence 200k draws, cell streams to 2.2e-9, k rule). A3–A5 remain.
   PR is verified by CI fmt/clippy/tests ×3 OS; code written
   rustfmt-canonical (calibrated against repo-passing forms) and
   self-reviewed for borrowck
-- Python cross-check + WGSL lint (repo-external, `~/my-project/scripts/`):
-  ALL PASS
+- Python cross-check + WGSL lint + LUT-gather simulation
+  (repo-external, `~/my-project/scripts/`): ALL PASS
+- **CI round 7: 38/38 GREEN on both trigger runs** — Metal parity:
+  grain worst 8.583e-6 (k=1 native case; was 2.248e-3 at round 3),
+  halation 2.384e-7, determinism bit-equal, zero pixels > 1e-5;
+  WARP passes the same gates
 - `validate_docs.py` — PASS locally (PLAN/FILM_MODEL/session log)
 - Sandbox limits (unchanged): node/npm/python3 present; **no cargo** —
   Rust fmt/clippy/tests verified by CI; owner machine is the runtime
