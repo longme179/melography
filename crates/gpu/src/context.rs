@@ -108,7 +108,7 @@ pub fn adapter_score(r: &AdapterReport) -> u32 {
 /// enumeration order, so the pick is deterministic).
 pub fn ranked_adapters() -> Vec<AdapterReport> {
     let mut list = crate::enumerate_adapters();
-    list.sort_by(|a, b| adapter_score(b).cmp(&adapter_score(a)));
+    list.sort_by_key(|a| std::cmp::Reverse(adapter_score(a)));
     list
 }
 

@@ -503,7 +503,7 @@ fn grain_dispatch(
             label: Some("grain-pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&pipeline);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups((n as u32).div_ceil(64), 1, 1);
     }
@@ -645,7 +645,7 @@ fn halation_dispatch(
             label: Some("halation-h-pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&h_pipeline);
+        pass.set_pipeline(h_pipeline);
         pass.set_bind_group(0, &h_bg, &[]);
         pass.dispatch_workgroups((n as u32).div_ceil(64), 1, 1);
     }
@@ -654,7 +654,7 @@ fn halation_dispatch(
             label: Some("halation-v-pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&v_pipeline);
+        pass.set_pipeline(v_pipeline);
         pass.set_bind_group(0, &v_bg, &[]);
         pass.dispatch_workgroups((n as u32).div_ceil(64), 1, 1);
     }

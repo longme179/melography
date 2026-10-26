@@ -277,6 +277,15 @@ the user. Fallback contract (app `GpuRuntime`): no adapter → CPU for
 the session (reason surfaced); pinned adapter absent → CPU with the
 honest reason; 3 consecutive render failures → session circuit
 breaker (re-armed by an adapter change in Settings or a restart).
+**The gate's first real run caught a genuine M2 bug:** the CPU chain
+computed the halation output (`X + H(X)`) and then DISCARDED it — the
+H&D response ran on the un-halated excitation and the grain stage
+overwrote the halated rows, so halation was visually dead in every CPU
+render (preview AND export) since M2 while every stage-level gate
+stayed green. The full-chain parity gate failed at 3.9e-2 on Metal
+(20× budget) on its first execution; the fix routes the response
+through the halated plane per FILM_MODEL §C2→§D (chain invariants —
+determinism, tiled≡mono — unaffected; no gate pinned the buggy bytes).
 Parity gates (`gpu_chain_parity`, runs in the workspace suite via the
 self-dev-dep M0 pattern): full chain vs the CPU monolithic render ≤
 2e-3 (each constituent kernel holds 1e-3 standalone; the composition
