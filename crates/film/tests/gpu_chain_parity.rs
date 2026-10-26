@@ -263,8 +263,128 @@ fn full_chain_parity_mono_stage_isolation() {
     grain_leg("standalone/mono@112x84", stock, 112, 84);
     grain_leg("standalone/warm@112x84", warm, 112, 84);
     grain_leg("standalone/mono@128x96", stock, 128, 96);
-    grain_leg("standalone/mono@112x84-tall", stock, 112, 84);
     let _ = CropRule::FitWidth; // (the LUT/leg imports stay used if legs change)
+
+    // ── Leg A: the composition with grain via the STANDALONE runner ──
+    // The standalone legs above pass at 1e-6 while the composition
+    // diverges at 3.9e-2 — the only mechanical differences are (a) the
+    // persistent-context dispatch (`run_grain_on`) vs the fresh-acquire
+    // `run_grain`, and (b) the grain input values. Leg A swaps (a);
+    // Leg B swaps (b). Between them, one must flip.
+    {
+        use melography_gpu::spatial::run_grain as run_grain_standalone;
+        // Rebuild the composition by hand, one dispatch at a time,
+        // exactly as gpu_chain::render_gpu does — but grain through the
+        // standalone runner.
+        use melography_film::chain::ChainStages;
+        use melography_film::gpu_bridge::{
+            pack_film_pixel_params, pack_vignette_gpu_params, pack_veiling_gpu_params,
+        };
+        use melography_gpu::film_pixel::run_film_pixel_on;
+        use melography_gpu::vignette::run_vignette_on;
+
+        let img = test_image(112, 84, 0.02);
+        let lens = LensParams {
+            vignette_amount: 0.45,
+            veiling_amount: 0.5,
+            veiling_sigma_mm: 0.35,
+            ..LensParams::default()
+        };
+        let mut p = params_for(stock, lens);
+        p.grain_fast = false;
+        let (w, h) = (img.width(), img.height());
+        let st = ChainStages::resolve(&p, w, h);
+        let mut cur: Vec<f32> = img.data().to_vec();
+        let vp = pack_vignette_gpu_params(&st.lens, &st.frame, w, h);
+        cur = run_vignette_on(&ctx, &vp, &cur).expect("vignette");
+        let veil = pack_veiling_gpu_params(&st.veiling, st.lens.veiling_amount, w, h);
+        cur = melography_gpu::spatial::run_halation_on(&ctx, &veil, &cur).expect("veiling");
+        let mut fp = pack_film_pixel_params(&st.em, &st.print, &p.adjustments);
+        fp.stage = 1;
+        cur = run_film_pixel_on(&ctx, &fp, &cur).expect("excite");
+        fp.stage = 2;
+        cur = run_film_pixel_on(&ctx, &fp, &cur).expect("respond");
+        // GRAIN VIA THE STANDALONE RUNNER (fresh acquire):
+        let gp = match &st.grain {
+            melography_film::grain::GrainStage::Full(f) => f.gpu_params(&st.frame, w, h),
+            _ => unreachable!(),
+        };
+        cur = run_grain_standalone(&gp, &cur).expect("grain standalone");
+        fp.stage = 4;
+        cur = run_film_pixel_on(&ctx, &fp, &cur).expect("print");
+        let cpu = render(&img, &params_for(stock, lens)).expect("cpu render");
+        let mut worst = 0.0f64;
+        for (c, g) in cpu.data().iter().zip(&cur) {
+            worst = worst.max((f64::from(*c) - f64::from(*g)).abs());
+        }
+        eprintln!("legA/composition-grain-standalone: worst |Δ| = {worst:.3e}");
+    }
+
+    // ── Leg B: standalone grain fed the REAL respond output ─────────
+    // The CPU stages run manually (all pub) to the response output,
+    // then GrainField::apply (CPU, f64 plane) vs run_grain (GPU, the
+    // same values as f32) — isolates the input-values question from
+    // the composition entirely.
+    {
+        use melography_film::chain::ChainStages;
+        use melography_film::emulsion::{apply_excitation_inplace, apply_response_inplace};
+        use melography_film::grain::GrainField;
+        use melography_film::optics::{apply_vignette_inplace, Plane};
+        use melography_gpu::spatial::run_grain;
+
+        let img = test_image(112, 84, 0.02);
+        let lens = LensParams {
+            vignette_amount: 0.45,
+            veiling_amount: 0.5,
+            veiling_sigma_mm: 0.35,
+            ..LensParams::default()
+        };
+        let mut p = params_for(stock, lens);
+        p.grain_fast = false;
+        let (w, h) = (img.width(), img.height());
+        let st = ChainStages::resolve(&p, w, h);
+        // CPU stages to the response output on a full-image plane.
+        let mut plane = Plane::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let px = img.pixel(x, y);
+                plane.set3(x, y, [f64::from(px[0]), f64::from(px[1]), f64::from(px[2])]);
+            }
+        }
+        apply_vignette_inplace(&mut plane, 0, h, 0, &st.lens, &st.frame);
+        // (veiling skipped in Leg B — the input domain question is the
+        // response output's VALUES, and vignette already varies them)
+        apply_excitation_inplace(&mut plane, 0, h, &st.em, p.adjustments.ev, p.adjustments.pre_desaturate);
+        apply_response_inplace(&mut plane, 0, h, &st.em);
+        let field = match &st.grain {
+            melography_film::grain::GrainStage::Full(f) => f,
+            _ => unreachable!(),
+        };
+        let mut cpu_g = Plane::new(w, h);
+        field.apply(&plane, &mut cpu_g, 0, h, &st.frame, 0, h);
+        let gp = field.gpu_params(&st.frame, w, h);
+        let src_f32: Vec<f32> = plane.data.iter().map(|v| *v as f32).collect();
+        let gpu_g = run_grain(&gp, &src_f32).expect("grain on respond output");
+        let mut worst = 0.0f64;
+        let mut worst_at = 0usize;
+        for (idx, (c, g)) in cpu_g.data.iter().zip(&gpu_g).enumerate() {
+            let d = (f64::from(*c) - f64::from(*g)).abs();
+            if d > worst {
+                worst = d;
+                worst_at = idx;
+            }
+        }
+        // Report the density stats too (the σ(D) input domain).
+        let mut dmin = f64::MAX;
+        let mut dmax = f64::MIN;
+        for v in &plane.data {
+            dmin = dmin.min(*v);
+            dmax = dmax.max(*v);
+        }
+        eprintln!(
+            "legB/standalone-grain-on-respond-output: worst |Δ| = {worst:.3e} at sample {worst_at} (density range {dmin:.4}..{dmax:.4})"
+        );
+    }
 }
 
 #[test]
