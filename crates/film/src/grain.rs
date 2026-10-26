@@ -117,11 +117,64 @@ impl GrainField {
     /// and the presence probability is shipped as the exact u32
     /// threshold `ceil(p·2^32)` so presence decisions match the CPU's
     /// f64 comparison bit-for-bit. The parity test owns the tolerance.
+    ///
+    /// Precision contract (CI round 3, k = 1 case): absolute film
+    /// coordinates are ~18 mm where f32 eps (1.07e-6 mm) is a third of
+    /// a grain radius, so the gather runs in CELL units through
+    /// compensated (hi + lo) constants, and the cell-centre density
+    /// read is guarded by INTEGER cell-index ranges — the CPU's exact
+    /// f64 bilinear-guard decisions, direct-evaluated here.
     #[must_use]
     pub fn gpu_params(&self, frame: &FilmFrame, w: u32, h: u32) -> GrainGpuParams {
         let thr_f = (self.presence_p * 4_294_967_296.0).ceil();
         let presence_always = thr_f >= 4_294_967_296.0;
         let k = ((frame.mm_per_pixel / 0.006).round() as u32).clamp(1, 4);
+        let split = |x: f64| -> (f32, f32) {
+            let hi = x as f32;
+            (hi, (x - f64::from(hi)) as f32)
+        };
+        let (a_hi, a_lo) = split(18.0 / self.cell_mm);
+        let (b_hi, b_lo) = split(12.0 / self.cell_mm);
+        let (m_hi, m_lo) = split(frame.mm_per_pixel / self.cell_mm);
+        // Integer density-guard ranges: fx(iy)-of-the-cell-centre in
+        // [0, w-1] x [0, h-1], decided with the EXACT CPU formula and
+        // corrected by direct evaluation (the initial closed form is
+        // real-algebra-exact; f64 rounding can shift it by one cell).
+        let w64 = f64::from(w);
+        let h64 = f64::from(h);
+        let mmpp = frame.mm_per_pixel;
+        let cell = self.cell_mm;
+        let fx_of = |ix: i64| ((f64::from(ix) + 0.5) * cell - 18.0) / mmpp + w64 * 0.5;
+        let fy_of = |iy: i64| ((f64::from(iy) + 0.5) * cell - 12.0) / mmpp + h64 * 0.5;
+        let mut ix_min = ((18.0 - w64 * 0.5 * mmpp) / cell - 0.5).ceil() as i64;
+        while fx_of(ix_min) < 0.0 {
+            ix_min += 1;
+        }
+        while fx_of(ix_min - 1) >= 0.0 {
+            ix_min -= 1;
+        }
+        let mut ix_max = ((18.0 + (w64 * 0.5 - 1.0) * mmpp) / cell - 0.5).floor() as i64;
+        while fx_of(ix_max) > w64 - 1.0 {
+            ix_max -= 1;
+        }
+        while fx_of(ix_max + 1) <= w64 - 1.0 {
+            ix_max += 1;
+        }
+        let mut iy_min = ((12.0 - h64 * 0.5 * mmpp) / cell - 0.5).ceil() as i64;
+        while fy_of(iy_min) < 0.0 {
+            iy_min += 1;
+        }
+        while fy_of(iy_min - 1) >= 0.0 {
+            iy_min -= 1;
+        }
+        let mut iy_max = ((12.0 + (h64 * 0.5 - 1.0) * mmpp) / cell - 0.5).floor() as i64;
+        while fy_of(iy_max) > h64 - 1.0 {
+            iy_max -= 1;
+        }
+        while fy_of(iy_max + 1) <= h64 - 1.0 {
+            iy_max += 1;
+        }
+        let sat = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
         GrainGpuParams {
             enabled: self.enabled,
             layers_mono: self.layers == LayerLayout::Monochrome,
@@ -139,6 +192,16 @@ impl GrainField {
             w,
             h,
             k,
+            a_hi,
+            a_lo,
+            b_hi,
+            b_lo,
+            m_hi,
+            m_lo,
+            guard_ix_min: sat(ix_min),
+            guard_ix_max: sat(ix_max),
+            guard_iy_min: sat(iy_min),
+            guard_iy_max: sat(iy_max),
             curve_density: self.sigma_curve.density.iter().map(|v| *v as f32).collect(),
             curve_sigma: self.sigma_curve.sigma.iter().map(|v| *v as f32).collect(),
         }

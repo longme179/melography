@@ -16,6 +16,12 @@
 //!   effects are benign by construction: the compact bump profile is
 //!   C¹ at `t = 1` (an inclusion flip contributes weight ≈ 0) and the
 //!   gather reach exceeds every possible radius by a full cell.
+//!   Positions run in CELL units through compensated (two-sum + fma
+//!   residual) pairs and the cell-centre density read is guarded by
+//!   INTEGER cell-index ranges: absolute film coordinates (~18 mm)
+//!   carry an f32 eps of a third of a grain radius, which the CI
+//!   round 3 k=1 parity case exposed (2.28e-3 → compensated 6.7e-7 in
+//!   the Python f32 simulation of the same gather).
 //! * **halation** (§C2): separable h+v convolution, per-channel unit-DC
 //!   taps and gains, zero padding at the frame edge — the CPU math in
 //!   f32.
@@ -40,6 +46,7 @@ const GRAIN_SHADER: &str = r#"
 @group(0) @binding(2) var<storage, read_write> dst: array<f32>;
 
 fn u32At(i: u32) -> u32 { return bitcast<u32>(params[i]); }
+fn i32At(i: u32) -> i32 { return bitcast<i32>(params[i]); }
 fn flags() -> u32 { return u32At(20u); }
 fn grainEnabled() -> bool { return (flags() & 1u) != 0u; }
 fn isMono() -> bool { return (flags() & 2u) != 0u; }
@@ -49,7 +56,7 @@ fn imgH() -> u32 { return u32At(22u); }
 fn kSup() -> u32 { return u32At(23u); }
 fn curveN() -> u32 { return u32At(24u); }
 
-const CURVE_BASE: u32 = 25u;
+const CURVE_BASE: u32 = 35u;
 const TAU: f32 = 6.283185307179586;
 
 // Splitmix32 finalizer + hash4 — bit-portable with the CPU hash.rs
@@ -112,14 +119,15 @@ fn sigmaAt(d: f32) -> f32 {
     return curveY(last);
 }
 
-// Bilinear density read with Plane::bilinear semantics: zero outside
-// the corner-coordinate box [0, w-1] × [0, h-1], edge-clamped taps.
-fn srcBilinear(fx: f32, fy: f32) -> vec3<f32> {
+// Bilinear density read, edge-CLAMPED. The out-of-image discontinuity
+// is decided by the INTEGER cell-index guard in cellDensityLum (the
+// CPU's exact f64 decision, packed at resolve time); inside the plane
+// the interpolation is continuous, so f32 positions only smooth it.
+fn srcBilinearClamped(fx0: f32, fy0: f32) -> vec3<f32> {
     let w = imgW();
     let h = imgH();
-    if (!(fx >= 0.0 && fy >= 0.0 && fx <= f32(w) - 1.0 && fy <= f32(h) - 1.0)) {
-        return vec3<f32>(0.0);
-    }
+    let fx = clamp(fx0, 0.0, f32(w) - 1.0);
+    let fy = clamp(fy0, 0.0, f32(h) - 1.0);
     let x0 = u32(floor(fx));
     let y0 = u32(floor(fy));
     let x1 = min(x0 + 1u, w - 1u);
@@ -139,17 +147,22 @@ fn srcBilinear(fx: f32, fy: f32) -> vec3<f32> {
     return top * (1.0 - ty) + bot * ty;
 }
 
-// Luminance density at a lattice cell centre, projected to image
-// pixels (the full-image pass has y_origin = 0 and plane height =
-// image height, so the CPU's absolute/local row split collapses).
-fn cellDensityLum(cx: f32, cy: f32) -> f32 {
+// Luminance density at a lattice cell centre: 0 outside the image
+// (the INTEGER guard — bit-matching the CPU's f64 bilinear-guard
+// decision; a f32 guard could flip at the edge and jump the read by
+// the full edge density), clamped bilinear inside.
+fn cellDensityLum(ix: i32, iy: i32) -> f32 {
+    if (ix < i32At(31u) || ix > i32At(32u) || iy < i32At(33u) || iy > i32At(34u)) {
+        return 0.0;
+    }
     let mmpp = params[0];
     let w = f32(imgW());
     let h = f32(imgH());
-    let fx = (cx - 18.0) / mmpp + w * 0.5;
-    let fy = (cy - 12.0) / mmpp + h * 0.5;
-    if (fy < 0.0 || fy > h - 1.0) { return 0.0; }
-    let d = srcBilinear(fx, fy);
+    let cu = (f32(ix) + 0.5) * params[2];
+    let cv = (f32(iy) + 0.5) * params[2];
+    let fx = (cu - 18.0) / mmpp + w * 0.5;
+    let fy = (cv - 12.0) / mmpp + h * 0.5;
+    let d = srcBilinearClamped(fx, fy);
     return 0.25 * d.x + 0.5 * d.y + 0.25 * d.z;
 }
 
@@ -178,32 +191,60 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let mmpp = params[0];
-    let s = params[1];
+    // ── Position precision contract (CI round 3) ────────────────────
+    // Absolute film coordinates are ~18 mm where f32 eps (1.07e-6 mm)
+    // is a third of a grain radius; naive f32 positions disagree with
+    // the CPU at the 1e-3 parity level at native scale. The gather
+    // therefore runs in CELL units through a compensated (hi + corr)
+    // pair: two-sum residuals (exact) + an fma product residual keep
+    // ~1e-11-cell accuracy, and the hi-part cell subtraction is exact
+    // under Sterbenz.
     let cell_mm = params[2];
-    let reach = params[5] + cell_mm;
-    let uc = 18.0 + (f32(x) + 0.5 - f32(w) * 0.5) * mmpp;
-    let vc = 12.0 + (f32(y) + 0.5 - f32(imgH()) * 0.5) * mmpp;
+    let xp = f32(x) + 0.5 - f32(w) * 0.5;
+    let yp = f32(y) + 0.5 - f32(imgH()) * 0.5;
+    let ph = xp * params[29u];
+    let pe = fma(xp, params[29u], -ph);
+    let qs = params[25u] + ph;
+    let qe0 = (params[25u] - qs) + ph;
+    var qe = qe0 + params[26u];
+    qe = qe + pe;
+    qe = qe + xp * params[30u];
+    let rh = yp * params[29u];
+    let re = fma(yp, params[29u], -rh);
+    let rs = params[27u] + rh;
+    let re0 = (params[27u] - rs) + rh;
+    var rc = re0 + params[28u];
+    rc = rc + re;
+    rc = rc + yp * params[30u];
+
     let k = kSup();
-    let sub = mmpp / f32(k);
+    let m_over_k = params[29u] / f32(k);
+    // Gather reach in cell units: (r_max + cell_mm)/cell_mm.
+    let reach_c = params[5] / cell_mm + 1.0;
 
     // One accumulator per pixel across all k² sub-samples (the CPU
     // gather loop order: samples outer, cells inner, fixed order).
     var acc = vec3<f32>(0.0);
     for (var sj = 0u; sj < k; sj = sj + 1u) {
         for (var si = 0u; si < k; si = si + 1u) {
-            let u = uc + (f32(si) + 0.5) * sub - 0.5 * mmpp;
-            let v = vc + (f32(sj) + 0.5) * sub - 0.5 * mmpp;
-            let ix_lo = i32(floor((u - reach) * s));
-            let ix_hi = i32(floor((u + reach) * s));
-            let iy_lo = i32(floor((v - reach) * s));
-            let iy_hi = i32(floor((v + reach) * s));
+            // Sub-sample offset in cell units (exactly 0 at k = 1).
+            let off_x = (f32(si) + 0.5) * m_over_k - 0.5 * params[29u];
+            let off_y = (f32(sj) + 0.5) * m_over_k - 0.5 * params[29u];
+            let sxp = qs + off_x;
+            let sxe = (qs - sxp) + off_x;
+            let syp = rs + off_y;
+            let sye = (rs - syp) + off_y;
+            let corr_x = qe + sxe;
+            let corr_y = rc + sye;
+            let ix_lo = i32(floor(sxp + corr_x - reach_c));
+            let ix_hi = i32(floor(sxp + corr_x + reach_c));
+            let iy_lo = i32(floor(syp + corr_y - reach_c));
+            let iy_hi = i32(floor(syp + corr_y + reach_c));
             for (var iy = iy_lo; iy <= iy_hi; iy = iy + 1) {
                 for (var ix = ix_lo; ix <= ix_hi; ix = ix + 1) {
                     // σ(D) at the CELL centre (not the jittered grain
                     // position) — the CPU cache-build contract.
-                    let sigma = sigmaAt(cellDensityLum((f32(ix) + 0.5) * cell_mm,
-                                                       (f32(iy) + 0.5) * cell_mm));
+                    let sigma = sigmaAt(cellDensityLum(ix, iy));
                     if (sigma <= 0.0) { continue; }
 
                     var r = Rng(hash4(bitcast<u32>(ix), bitcast<u32>(iy), u32At(18u), 0x6A11u));
@@ -220,8 +261,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let p1 = rngNormalPair(&r);
                     let p2 = rngNormalPair(&r);
 
-                    let cx = (f32(ix) + jit_u) * cell_mm;
-                    let cy = (f32(iy) + jit_v) * cell_mm;
+                    // Cell centre minus sample in CELL units: the hi
+                    // part subtracts exactly (Sterbenz), the residual
+                    // pair carries the compensation.
+                    let t1 = sxp - f32(ix);
+                    let du_c = (t1 - jit_u) + corr_x;
+                    let t2 = syp - f32(iy);
+                    let dv_c = (t2 - jit_v) + corr_y;
+                    let du = du_c * cell_mm;
+                    let dv = dv_c * cell_mm;
+                    let d2 = du * du + dv * dv;
+                    if (d2 >= radius * radius) { continue; }
+
                     let g = vec3<f32>(p1.x, p1.y, p2.x);
                     // amp[c] = a_norm[c]·σ·Σ_j chol[3c+j]·g[j]; mono
                     // uses chol[0]·g[0] only (rho ignored, as the CPU).
@@ -238,10 +289,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                         amp2 = params[17] * sigma * (params[12] * g.x + params[13] * g.y + params[14] * g.z);
                     }
 
-                    let du = u - cx;
-                    let dv = v - cy;
-                    let d2 = du * du + dv * dv;
-                    if (d2 >= radius * radius) { continue; }
                     let t = sqrt(d2) / radius;
                     let wgt = bump(t);
                     acc = acc + wgt * vec3<f32>(amp0, amp1, amp2);

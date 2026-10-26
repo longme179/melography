@@ -50,6 +50,28 @@ pub struct GrainGpuParams {
     /// Pixel-area supersampling factor (CPU rule:
     /// `clamp(round(mmpp / 6 µm), 1, 4)`, computed in f64 at pack time).
     pub k: u32,
+    /// Compensated (hi + lo f32 pair) lattice-frame constants for the
+    /// gather: `18/cell_mm`, `12/cell_mm`, `mmpp/cell_mm`. Absolute film
+    /// coordinates are ~18 mm where f32 eps (1.07e-6 mm) is a third of
+    /// a grain radius — naive f32 positions disagree with the CPU at
+    /// the 1e-3 parity level (CI round 3, k = 1 case). The pair
+    /// arithmetic (two-sum + fma residual in the shader) carries
+    /// ~1e-11-cell accuracy.
+    pub a_hi: f32,
+    pub a_lo: f32,
+    pub b_hi: f32,
+    pub b_lo: f32,
+    pub m_hi: f32,
+    pub m_lo: f32,
+    /// Integer cell-index ranges where the cell-centre density read is
+    /// INSIDE the plane — the exact f64 decisions of the CPU's bilinear
+    /// guards, direct-evaluated and corrected at pack time. A f32 guard
+    /// in the shader could flip at the image edge and jump the read by
+    /// the full edge density (a σ discontinuity, not a smooth error).
+    pub guard_ix_min: i32,
+    pub guard_ix_max: i32,
+    pub guard_iy_min: i32,
+    pub guard_iy_max: i32,
     /// σ(D) curve, parallel arrays (piecewise-linear, flat ends).
     pub curve_density: Vec<f32>,
     pub curve_sigma: Vec<f32>,
@@ -92,7 +114,12 @@ pub struct HalationGpuParams {
 /// [22] h             (u32 bits)
 /// [23] k             (u32 bits)
 /// [24] curve_n       (u32 bits)
-/// [25..)  curve pairs: n × (density, sigma)
+/// [25] a_hi [26] a_lo    (18/cell_mm, compensated pair)
+/// [27] b_hi [28] b_lo    (12/cell_mm, compensated pair)
+/// [29] m_hi [30] m_lo    (mmpp/cell_mm, compensated pair)
+/// [31] guard_ix_min  (i32 bits) [32] guard_ix_max (i32 bits)
+/// [33] guard_iy_min  (i32 bits) [34] guard_iy_max (i32 bits)
+/// [35..)  curve pairs: n × (density, sigma)
 /// ```
 #[allow(dead_code)]
 pub(crate) fn pack_grain(params: &GrainGpuParams) -> Result<Vec<f32>, String> {
@@ -113,7 +140,7 @@ pub(crate) fn pack_grain(params: &GrainGpuParams) -> Result<Vec<f32>, String> {
     if params.presence_always {
         flags |= 4;
     }
-    let mut v: Vec<f32> = Vec::with_capacity(25 + 2 * params.curve_density.len());
+    let mut v: Vec<f32> = Vec::with_capacity(35 + 2 * params.curve_density.len());
     v.push(params.mm_per_pixel);
     v.push(params.cells_per_mm);
     v.push(params.cell_mm);
@@ -129,6 +156,16 @@ pub(crate) fn pack_grain(params: &GrainGpuParams) -> Result<Vec<f32>, String> {
     v.push(f32::from_bits(params.h));
     v.push(f32::from_bits(params.k));
     v.push(f32::from_bits(params.curve_density.len() as u32));
+    v.push(params.a_hi);
+    v.push(params.a_lo);
+    v.push(params.b_hi);
+    v.push(params.b_lo);
+    v.push(params.m_hi);
+    v.push(params.m_lo);
+    v.push(f32::from_bits(params.guard_ix_min as u32));
+    v.push(f32::from_bits(params.guard_ix_max as u32));
+    v.push(f32::from_bits(params.guard_iy_min as u32));
+    v.push(f32::from_bits(params.guard_iy_max as u32));
     for (d, s) in params.curve_density.iter().zip(&params.curve_sigma) {
         v.push(*d);
         v.push(*s);
@@ -186,6 +223,16 @@ mod tests {
             w: 320,
             h: 240,
             k: 3,
+            a_hi: 828.0,
+            a_lo: 0.0000244,
+            b_hi: 552.0,
+            b_lo: 0.0000172,
+            m_hi: 0.276,
+            m_lo: 0.0000001,
+            guard_ix_min: -3,
+            guard_ix_max: 831,
+            guard_iy_min: 469,
+            guard_iy_max: 634,
             curve_density: vec![0.0, 0.5, 1.2, 2.0],
             curve_sigma: vec![0.012, 0.032, 0.04, 0.022],
         }
@@ -194,7 +241,7 @@ mod tests {
     #[test]
     fn grain_pack_layout() {
         let p = pack_grain(&grain()).unwrap();
-        assert_eq!(p.len(), 25 + 8, "fixed header + 4 curve pairs");
+        assert_eq!(p.len(), 35 + 8, "fixed header + 4 curve pairs");
         assert_eq!(p[0], 0.017578);
         assert_eq!(p[6], 1.0, "chol[0]");
         assert_eq!(p[15], 0.9, "a_norm[0]");
@@ -205,8 +252,15 @@ mod tests {
         assert_eq!(p[22].to_bits(), 240, "h bits");
         assert_eq!(p[23].to_bits(), 3, "k bits");
         assert_eq!(p[24].to_bits(), 4, "curve_n bits");
-        assert_eq!(p[25], 0.0, "curve density[0]");
-        assert_eq!(p[26], 0.012, "curve sigma[0]");
+        assert_eq!(p[25], 828.0, "a_hi");
+        assert_eq!(p[26], 0.0000244, "a_lo");
+        assert_eq!(p[29], 0.276, "m_hi");
+        assert_eq!(p[31].to_bits(), (-3i32) as u32, "guard_ix_min bits");
+        assert_eq!(p[32].to_bits(), 831, "guard_ix_max bits");
+        assert_eq!(p[33].to_bits(), 469, "guard_iy_min bits");
+        assert_eq!(p[34].to_bits(), 634, "guard_iy_max bits");
+        assert_eq!(p[35], 0.0, "curve density[0]");
+        assert_eq!(p[36], 0.012, "curve sigma[0]");
         // Mismatched curve arrays are an honest error, not a wrong pack.
         let mut bad = grain();
         bad.curve_sigma.pop();
