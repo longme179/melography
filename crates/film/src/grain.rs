@@ -129,21 +129,39 @@ impl GrainField {
         let thr_f = (self.presence_p * 4_294_967_296.0).ceil();
         let presence_always = thr_f >= 4_294_967_296.0;
         let k = ((frame.mm_per_pixel / 0.006).round() as u32).clamp(1, 4);
-        let split = |x: f64| -> (f32, f32) {
-            let hi = x as f32;
-            (hi, (x - f64::from(hi)) as f32)
-        };
-        let (a_hi, a_lo) = split(18.0 / self.cell_mm);
-        let (b_hi, b_lo) = split(12.0 / self.cell_mm);
-        let (m_hi, m_lo) = split(frame.mm_per_pixel / self.cell_mm);
-        // Integer density-guard ranges: fx(iy)-of-the-cell-centre in
-        // [0, w-1] x [0, h-1], decided with the EXACT CPU formula and
-        // corrected by direct evaluation (the initial closed form is
-        // real-algebra-exact; f64 rounding can shift it by one cell).
         let w64 = f64::from(w);
         let h64 = f64::from(h);
         let mmpp = frame.mm_per_pixel;
         let cell = self.cell_mm;
+        // Per-axis position LUTs (CI rounds 3–7): the sample position of
+        // every column (u) and row (v) in CELL units as exact
+        // (integer, fraction) pairs, from the same `pixel_to_mm` formula
+        // the reference uses. Absolute film coordinates are ~18 mm where
+        // f32 eps is a third of a grain radius, and compensated (hi+lo)
+        // shader arithmetic proved vulnerable to backend fast-math
+        // contraction (Metal vs WARP diverged 5× on the same WGSL); the
+        // LUTs leave the shader only small-number math.
+        let m = mmpp / cell;
+        let mut u_pos = Vec::with_capacity(w as usize * 2);
+        for x in 0..w {
+            let u = 18.0 + (f64::from(x) + 0.5 - w64 * 0.5) * mmpp;
+            let q = u / cell;
+            let qi = q.floor() as i32;
+            u_pos.push(f32::from_bits(qi as u32));
+            u_pos.push((q - f64::from(qi)) as f32);
+        }
+        let mut v_pos = Vec::with_capacity(h as usize * 2);
+        for y in 0..h {
+            let v = 12.0 + (f64::from(y) + 0.5 - h64 * 0.5) * mmpp;
+            let q = v / cell;
+            let qi = q.floor() as i32;
+            v_pos.push(f32::from_bits(qi as u32));
+            v_pos.push((q - f64::from(qi)) as f32);
+        }
+        // Integer density-guard ranges: fx/fy-of-the-cell-centre in
+        // [0, w-1] x [0, h-1], decided with the EXACT CPU formula and
+        // corrected by direct evaluation (the initial closed form is
+        // real-algebra-exact; f64 rounding can shift it by one cell).
         let fx_of = |ix: i64| ((ix as f64 + 0.5) * cell - 18.0) / mmpp + w64 * 0.5;
         let fy_of = |iy: i64| ((iy as f64 + 0.5) * cell - 12.0) / mmpp + h64 * 0.5;
         let mut ix_min = ((18.0 - w64 * 0.5 * mmpp) / cell - 0.5).ceil() as i64;
@@ -192,12 +210,9 @@ impl GrainField {
             w,
             h,
             k,
-            a_hi,
-            a_lo,
-            b_hi,
-            b_lo,
-            m_hi,
-            m_lo,
+            m: m as f32,
+            u_pos,
+            v_pos,
             guard_ix_min: sat(ix_min),
             guard_ix_max: sat(ix_max),
             guard_iy_min: sat(iy_min),

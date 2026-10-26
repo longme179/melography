@@ -16,12 +16,14 @@
 //!   effects are benign by construction: the compact bump profile is
 //!   C¹ at `t = 1` (an inclusion flip contributes weight ≈ 0) and the
 //!   gather reach exceeds every possible radius by a full cell.
-//!   Positions run in CELL units through compensated (two-sum + fma
-//!   residual) pairs and the cell-centre density read is guarded by
-//!   INTEGER cell-index ranges: absolute film coordinates (~18 mm)
-//!   carry an f32 eps of a third of a grain radius, which the CI
-//!   round 3 k=1 parity case exposed (2.28e-3 → compensated 6.7e-7 in
-//!   the Python f32 simulation of the same gather).
+//!   Sample positions come from per-column/row (integer + fraction)
+//!   LUTs computed on the CPU in f64 — the shader only handles small
+//!   numbers, so no backend fast-math/contraction can create a
+//!   large-coordinate cancellation (the CI rounds 3–7 lesson: Metal
+//!   and WARP diverged 5× on the same compensated-arithmetic WGSL;
+//!   the same case reads 6.1e-7 in the Python f32 simulation of this
+//!   LUT design). The cell-centre density read is guarded by INTEGER
+//!   cell-index ranges (the CPU's exact f64 decisions).
 //! * **halation** (§C2): separable h+v convolution, per-channel unit-DC
 //!   taps and gains, zero padding at the frame edge — the CPU math in
 //!   f32.
@@ -41,9 +43,14 @@ const GRAIN_SHADER: &str = r#"
 // Grain gather — WGSL mirror of the CPU full model (FILM_MODEL §G).
 // One invocation per output pixel: pixel-area supersampled gather over
 // the hashed lattice cells whose bumps cover each sub-sample.
+// Positions come from per-column/row (integer, fraction) LUTs computed
+// on the CPU in f64 — the shader only ever handles small numbers
+// (immune to backend fast-math; the CI rounds 3–7 lesson).
 @group(0) @binding(0) var<storage, read> params: array<f32>;
-@group(0) @binding(1) var<storage, read> src: array<f32>;
-@group(0) @binding(2) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(1) var<storage, read> upos: array<f32>;
+@group(0) @binding(2) var<storage, read> vpos: array<f32>;
+@group(0) @binding(3) var<storage, read> src: array<f32>;
+@group(0) @binding(4) var<storage, read_write> dst: array<f32>;
 
 fn u32At(i: u32) -> u32 { return bitcast<u32>(params[i]); }
 fn i32At(i: u32) -> i32 { return bitcast<i32>(params[i]); }
@@ -56,7 +63,7 @@ fn imgH() -> u32 { return u32At(22u); }
 fn kSup() -> u32 { return u32At(23u); }
 fn curveN() -> u32 { return u32At(24u); }
 
-const CURVE_BASE: u32 = 35u;
+const CURVE_BASE: u32 = 30u;
 const TAU: f32 = 6.283185307179586;
 
 // Splitmix32 finalizer + hash4 — bit-portable with the CPU hash.rs
@@ -152,7 +159,7 @@ fn srcBilinearClamped(fx0: f32, fy0: f32) -> vec3<f32> {
 // decision; a f32 guard could flip at the edge and jump the read by
 // the full edge density), clamped bilinear inside.
 fn cellDensityLum(ix: i32, iy: i32) -> f32 {
-    if (ix < i32At(31u) || ix > i32At(32u) || iy < i32At(33u) || iy > i32At(34u)) {
+    if (ix < i32At(26u) || ix > i32At(27u) || iy < i32At(28u) || iy > i32At(29u)) {
         return 0.0;
     }
     let mmpp = params[0];
@@ -191,34 +198,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    // ── Position precision contract (CI round 3) ────────────────────
-    // Absolute film coordinates are ~18 mm where f32 eps (1.07e-6 mm)
-    // is a third of a grain radius; naive f32 positions disagree with
-    // the CPU at the 1e-3 parity level at native scale. The gather
-    // therefore runs in CELL units through a compensated (hi + corr)
-    // pair: two-sum residuals (exact) + an fma product residual keep
-    // ~1e-11-cell accuracy, and the hi-part cell subtraction is exact
-    // under Sterbenz.
+    // ── Position contract (CI rounds 3–7) ──────────────────────────
+    // The pixel's lattice position comes from CPU-computed (integer +
+    // fraction) LUTs — exact by construction. The shader's remaining
+    // math stays on small numbers: sub-sample offsets (≤ m cells) and
+    // cell offsets (window ±reach), so no backend fast-math contraction
+    // can produce a large-coordinate cancellation.
     let cell_mm = params[2];
-    let xp = f32(x) + 0.5 - f32(w) * 0.5;
-    let yp = f32(y) + 0.5 - f32(imgH()) * 0.5;
-    let ph = xp * params[29u];
-    let pe = fma(xp, params[29u], -ph);
-    let qs = params[25u] + ph;
-    let qe0 = (params[25u] - qs) + ph;
-    var qe = qe0 + params[26u];
-    qe = qe + pe;
-    qe = qe + xp * params[30u];
-    let rh = yp * params[29u];
-    let re = fma(yp, params[29u], -rh);
-    let rs = params[27u] + rh;
-    let re0 = (params[27u] - rs) + rh;
-    var rc = re0 + params[28u];
-    rc = rc + re;
-    rc = rc + yp * params[30u];
+    let qi_u = bitcast<i32>(upos[x * 2u]);
+    let qf_u = upos[x * 2u + 1u];
+    let qi_v = bitcast<i32>(vpos[y * 2u]);
+    let qf_v = vpos[y * 2u + 1u];
 
+    let m = params[25];
     let k = kSup();
-    let m_over_k = params[29u] / f32(k);
+    let m_over_k = m / f32(k);
     // Gather reach in cell units: (r_max + cell_mm)/cell_mm.
     let reach_c = params[5] / cell_mm + 1.0;
 
@@ -228,18 +222,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var sj = 0u; sj < k; sj = sj + 1u) {
         for (var si = 0u; si < k; si = si + 1u) {
             // Sub-sample offset in cell units (exactly 0 at k = 1).
-            let off_x = (f32(si) + 0.5) * m_over_k - 0.5 * params[29u];
-            let off_y = (f32(sj) + 0.5) * m_over_k - 0.5 * params[29u];
-            let sxp = qs + off_x;
-            let sxe = (qs - sxp) + off_x;
-            let syp = rs + off_y;
-            let sye = (rs - syp) + off_y;
-            let corr_x = qe + sxe;
-            let corr_y = rc + sye;
-            let ix_lo = i32(floor(sxp + corr_x - reach_c));
-            let ix_hi = i32(floor(sxp + corr_x + reach_c));
-            let iy_lo = i32(floor(syp + corr_y - reach_c));
-            let iy_hi = i32(floor(syp + corr_y + reach_c));
+            let base_x = qf_u + (f32(si) + 0.5) * m_over_k - 0.5 * m;
+            let base_y = qf_v + (f32(sj) + 0.5) * m_over_k - 0.5 * m;
+            let ix_lo = qi_u + i32(floor(base_x - reach_c));
+            let ix_hi = qi_u + i32(floor(base_x + reach_c));
+            let iy_lo = qi_v + i32(floor(base_y - reach_c));
+            let iy_hi = qi_v + i32(floor(base_y + reach_c));
             for (var iy = iy_lo; iy <= iy_hi; iy = iy + 1) {
                 for (var ix = ix_lo; ix <= ix_hi; ix = ix + 1) {
                     // σ(D) at the CELL centre (not the jittered grain
@@ -261,13 +249,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let p1 = rngNormalPair(&r);
                     let p2 = rngNormalPair(&r);
 
-                    // Cell centre minus sample in CELL units: the hi
-                    // part subtracts exactly (Sterbenz), the residual
-                    // pair carries the compensation.
-                    let t1 = sxp - f32(ix);
-                    let du_c = (t1 - jit_u) + corr_x;
-                    let t2 = syp - f32(iy);
-                    let dv_c = (t2 - jit_v) + corr_y;
+                    // Cell-centre minus sample in CELL units: integer
+                    // offsets are exact, so the only rounding sits on
+                    // small sums (≤ a few cells).
+                    let du_c = base_x - (f32(ix - qi_u) + jit_u);
+                    let dv_c = base_y - (f32(iy - qi_v) + jit_v);
                     let du = du_c * cell_mm;
                     let dv = dv_c * cell_mm;
                     let d2 = du * du + dv * dv;
@@ -482,6 +468,20 @@ pub fn run_grain(params: &GrainGpuParams, src: &[f32]) -> Result<Vec<f32>, GpuEr
             contents: bytemuck::cast_slice(&packed),
             usage: wgpu::BufferUsages::STORAGE,
         });
+    let upos_buf = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grain-upos"),
+            contents: bytemuck::cast_slice(&params.u_pos),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let vpos_buf = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grain-vpos"),
+            contents: bytemuck::cast_slice(&params.v_pos),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
     let src_buf = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -513,10 +513,18 @@ pub fn run_grain(params: &GrainGpuParams, src: &[f32]) -> Result<Vec<f32>, GpuEr
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: src_buf.as_entire_binding(),
+                resource: upos_buf.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
+                resource: vpos_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: src_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
                 resource: out_storage.as_entire_binding(),
             },
         ],

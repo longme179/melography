@@ -50,19 +50,23 @@ pub struct GrainGpuParams {
     /// Pixel-area supersampling factor (CPU rule:
     /// `clamp(round(mmpp / 6 µm), 1, 4)`, computed in f64 at pack time).
     pub k: u32,
-    /// Compensated (hi + lo f32 pair) lattice-frame constants for the
-    /// gather: `18/cell_mm`, `12/cell_mm`, `mmpp/cell_mm`. Absolute film
-    /// coordinates are ~18 mm where f32 eps (1.07e-6 mm) is a third of
-    /// a grain radius — naive f32 positions disagree with the CPU at
-    /// the 1e-3 parity level (CI round 3, k = 1 case). The pair
-    /// arithmetic (two-sum + fma residual in the shader) carries
-    /// ~1e-11-cell accuracy.
-    pub a_hi: f32,
-    pub a_lo: f32,
-    pub b_hi: f32,
-    pub b_lo: f32,
-    pub m_hi: f32,
-    pub m_lo: f32,
+    /// `mmpp / cell_mm` (cells per pixel) — only used for the SMALL
+    /// sub-sample offsets inside a pixel (≤ m cells); single f32 is
+    /// ample there.
+    pub m: f32,
+    /// Per-COLUMN sample positions in cell units as exact
+    /// (integer + fraction) pairs, computed on the CPU in f64 from the
+    /// SAME `pixel_to_mm` formula the reference uses: `[qi bits, qf]`
+    /// per column, so the shader never forms a large coordinate. This
+    /// is the CI round 3–7 lesson: absolute film coordinates are ~18 mm
+    /// where f32 eps is a third of a grain radius, compensated (hi+lo)
+    /// arithmetic is vulnerable to backend fast-math/contraction (Metal
+    /// vs WARP diverged 5× on the same WGSL), and (integer, fraction)
+    /// LUTs leave only small-number math in the shader — immune by
+    /// construction.
+    pub u_pos: Vec<f32>,
+    /// Per-ROW positions, same `[qi bits, qf]` layout.
+    pub v_pos: Vec<f32>,
     /// Integer cell-index ranges where the cell-centre density read is
     /// INSIDE the plane — the exact f64 decisions of the CPU's bilinear
     /// guards, direct-evaluated and corrected at pack time. A f32 guard
@@ -96,7 +100,9 @@ pub struct HalationGpuParams {
 }
 
 /// Packed f32 layout for the grain kernel (documented; the WGSL side
-/// decodes the same offsets):
+/// decodes the same offsets). The per-column/row position LUTs travel
+/// as SEPARATE storage buffers (`u_pos`/`v_pos`, `[qi bits, qf]` per
+/// index) — see `run_grain`'s bind group.
 ///
 /// ```text
 /// [0]  mm_per_pixel
@@ -114,12 +120,10 @@ pub struct HalationGpuParams {
 /// [22] h             (u32 bits)
 /// [23] k             (u32 bits)
 /// [24] curve_n       (u32 bits)
-/// [25] a_hi [26] a_lo    (18/cell_mm, compensated pair)
-/// [27] b_hi [28] b_lo    (12/cell_mm, compensated pair)
-/// [29] m_hi [30] m_lo    (mmpp/cell_mm, compensated pair)
-/// [31] guard_ix_min  (i32 bits) [32] guard_ix_max (i32 bits)
-/// [33] guard_iy_min  (i32 bits) [34] guard_iy_max (i32 bits)
-/// [35..)  curve pairs: n × (density, sigma)
+/// [25] m             (mmpp/cell_mm, for the sub-sample offsets)
+/// [26] guard_ix_min  (i32 bits) [27] guard_ix_max (i32 bits)
+/// [28] guard_iy_min  (i32 bits) [29] guard_iy_max (i32 bits)
+/// [30..)  curve pairs: n × (density, sigma)
 /// ```
 #[allow(dead_code)]
 pub(crate) fn pack_grain(params: &GrainGpuParams) -> Result<Vec<f32>, String> {
@@ -128,6 +132,20 @@ pub(crate) fn pack_grain(params: &GrainGpuParams) -> Result<Vec<f32>, String> {
             "grain kernel: σ(D) curve arrays must be parallel ({} vs {})",
             params.curve_density.len(),
             params.curve_sigma.len()
+        ));
+    }
+    let expected_u = params.w as usize * 2;
+    if params.u_pos.len() != expected_u {
+        return Err(format!(
+            "grain kernel: u_pos must hold w×2 entries ({} vs {expected_u})",
+            params.u_pos.len()
+        ));
+    }
+    let expected_v = params.h as usize * 2;
+    if params.v_pos.len() != expected_v {
+        return Err(format!(
+            "grain kernel: v_pos must hold h×2 entries ({} vs {expected_v})",
+            params.v_pos.len()
         ));
     }
     let mut flags = 0u32;
@@ -140,7 +158,7 @@ pub(crate) fn pack_grain(params: &GrainGpuParams) -> Result<Vec<f32>, String> {
     if params.presence_always {
         flags |= 4;
     }
-    let mut v: Vec<f32> = Vec::with_capacity(35 + 2 * params.curve_density.len());
+    let mut v: Vec<f32> = Vec::with_capacity(30 + 2 * params.curve_density.len());
     v.push(params.mm_per_pixel);
     v.push(params.cells_per_mm);
     v.push(params.cell_mm);
@@ -156,12 +174,7 @@ pub(crate) fn pack_grain(params: &GrainGpuParams) -> Result<Vec<f32>, String> {
     v.push(f32::from_bits(params.h));
     v.push(f32::from_bits(params.k));
     v.push(f32::from_bits(params.curve_density.len() as u32));
-    v.push(params.a_hi);
-    v.push(params.a_lo);
-    v.push(params.b_hi);
-    v.push(params.b_lo);
-    v.push(params.m_hi);
-    v.push(params.m_lo);
+    v.push(params.m);
     v.push(f32::from_bits(params.guard_ix_min as u32));
     v.push(f32::from_bits(params.guard_ix_max as u32));
     v.push(f32::from_bits(params.guard_iy_min as u32));
@@ -220,15 +233,30 @@ mod tests {
             seed: 0xDEAD_BEEF,
             presence_thr: 3_000_000_000,
             presence_always: false,
-            w: 320,
-            h: 240,
+            w: 4,
+            h: 3,
             k: 3,
-            a_hi: 828.0,
-            a_lo: 0.0000244,
-            b_hi: 552.0,
-            b_lo: 0.0000172,
-            m_hi: 0.276,
-            m_lo: 0.0000001,
+            m: 0.276,
+            // Two example columns/rows of the (integer, fraction) LUT:
+            // column 0 at 821.25 cells, column 1 at 821.526 cells, …
+            u_pos: vec![
+                f32::from_bits(821i32 as u32),
+                0.25,
+                f32::from_bits(821i32 as u32),
+                0.526,
+                f32::from_bits(822i32 as u32),
+                0.115,
+                f32::from_bits(822i32 as u32),
+                0.391,
+            ],
+            v_pos: vec![
+                f32::from_bits(469i32 as u32),
+                0.5,
+                f32::from_bits(469i32 as u32),
+                0.776,
+                f32::from_bits(470i32 as u32),
+                0.052,
+            ],
             guard_ix_min: -3,
             guard_ix_max: 831,
             guard_iy_min: 469,
@@ -241,29 +269,33 @@ mod tests {
     #[test]
     fn grain_pack_layout() {
         let p = pack_grain(&grain()).unwrap();
-        assert_eq!(p.len(), 35 + 8, "fixed header + 4 curve pairs");
+        assert_eq!(p.len(), 30 + 8, "fixed header + 4 curve pairs");
         assert_eq!(p[0], 0.017578);
         assert_eq!(p[6], 1.0, "chol[0]");
         assert_eq!(p[15], 0.9, "a_norm[0]");
         assert_eq!(p[18].to_bits(), 0xDEAD_BEEF, "seed bits");
         assert_eq!(p[19].to_bits(), 3_000_000_000, "presence threshold bits");
         assert_eq!(p[20].to_bits(), 1, "flags: enabled only");
-        assert_eq!(p[21].to_bits(), 320, "w bits");
-        assert_eq!(p[22].to_bits(), 240, "h bits");
+        assert_eq!(p[21].to_bits(), 4, "w bits");
+        assert_eq!(p[22].to_bits(), 3, "h bits");
         assert_eq!(p[23].to_bits(), 3, "k bits");
         assert_eq!(p[24].to_bits(), 4, "curve_n bits");
-        assert_eq!(p[25], 828.0, "a_hi");
-        assert_eq!(p[26], 0.0000244, "a_lo");
-        assert_eq!(p[29], 0.276, "m_hi");
-        assert_eq!(p[31].to_bits(), (-3i32) as u32, "guard_ix_min bits");
-        assert_eq!(p[32].to_bits(), 831, "guard_ix_max bits");
-        assert_eq!(p[33].to_bits(), 469, "guard_iy_min bits");
-        assert_eq!(p[34].to_bits(), 634, "guard_iy_max bits");
-        assert_eq!(p[35], 0.0, "curve density[0]");
-        assert_eq!(p[36], 0.012, "curve sigma[0]");
-        // Mismatched curve arrays are an honest error, not a wrong pack.
+        assert_eq!(p[25], 0.276, "m");
+        assert_eq!(p[26].to_bits(), (-3i32) as u32, "guard_ix_min bits");
+        assert_eq!(p[27].to_bits(), 831, "guard_ix_max bits");
+        assert_eq!(p[28].to_bits(), 469, "guard_iy_min bits");
+        assert_eq!(p[29].to_bits(), 634, "guard_iy_max bits");
+        assert_eq!(p[30], 0.0, "curve density[0]");
+        assert_eq!(p[31], 0.012, "curve sigma[0]");
+        // LUT length mismatches are honest errors, not wrong packs.
         let mut bad = grain();
         bad.curve_sigma.pop();
+        assert!(pack_grain(&bad).is_err());
+        let mut bad = grain();
+        bad.u_pos.pop();
+        assert!(pack_grain(&bad).is_err());
+        let mut bad = grain();
+        bad.v_pos.clear();
         assert!(pack_grain(&bad).is_err());
     }
 
