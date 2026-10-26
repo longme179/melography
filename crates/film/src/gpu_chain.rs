@@ -228,9 +228,15 @@ mod tests {
             .join("../..")
             .canonicalize()
             .unwrap();
-        let profiles = root.join("profiles");
-        let reg = melography_presets::StockRegistry::open(&profiles).expect("profiles");
-        let stock = reg.by_id("classic-monochrome-400").expect("mono stock");
+        // Parse the mono profile DIRECTLY (serde_json): the presets
+        // registry is a dev-dep linked against the SECOND film copy the
+        // self-dev-dependency puts in the graph — mixing its types with
+        // `crate::` types is E0308 (the round-7 lesson). The JSON parse
+        // yields the LOCAL StockProfile.
+        let stock_path = root.join("profiles/classic-monochrome-400.json");
+        let stock_json = std::fs::read_to_string(&stock_path).expect("mono profile readable");
+        let stock: crate::profile::StockProfile =
+            serde_json::from_str(&stock_json).expect("mono profile parses");
 
         let img = crate::gpu_chain::tests::leg_image(112, 84, 0.02);
         let lens = LensParams {
@@ -338,9 +344,9 @@ mod tests {
             for x in 0..w {
                 let fx = f64::from(x) / f64::from(w.max(1) - 1);
                 let fy = f64::from(y) / f64::from(h.max(1) - 1);
-                let disc =
-                    (-(((fx - 0.6) * (fx - 0.6) + (fy - 0.35) * (fy - 0.35)) / 0.01).exp() * 4.0)
-                        .exp();
+                let disc = (-(((fx - 0.6) * (fx - 0.6) + (fy - 0.35) * (fy - 0.35)) / 0.01).exp()
+                    * 4.0)
+                    .exp();
                 let v = (0.05 + 0.7 * fx + 0.25 * (1.0 - fy) + 0.5 * disc).min(1.6);
                 let i = ((y * w + x) * 3) as usize;
                 data[i] = (v * (1.0 + tint)) as f32;

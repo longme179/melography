@@ -225,9 +225,9 @@ fn full_chain_parity_mono_stage_isolation() {
             for x in 0..w {
                 let fx = f64::from(x) / f64::from(w.max(1) - 1);
                 let fy = f64::from(y) / f64::from(h.max(1) - 1);
-                let disc =
-                    (-(((fx - 0.6) * (fx - 0.6) + (fy - 0.35) * (fy - 0.35)) / 0.01).exp() * 3.0)
-                        .exp();
+                let disc = (-(((fx - 0.6) * (fx - 0.6) + (fy - 0.35) * (fy - 0.35)) / 0.01).exp()
+                    * 3.0)
+                    .exp();
                 let v = (0.02 + 2.2 * fx + 0.4 * (1.0 - fy) + 1.2 * disc).min(3.0);
                 p.set3(x, y, [v * 1.03, v, v * 0.97]);
             }
