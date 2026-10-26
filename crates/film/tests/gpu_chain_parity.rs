@@ -11,7 +11,7 @@
 //!
 //! Coverage: every shipped stock with all stages on; each spatial stage
 //! individually disabled (isolating its contribution); the k=1 native
-//! + k=2 mid supersampling regimes via tall FitHeight images; dispatch
+//! and k=2 mid supersampling regimes via tall FitHeight images; dispatch
 //! determinism (two runs → identical bytes); and the disabled-film
 //! identity. The stage-split ≡ fused bit-exactness gate lives in
 //! `src/gpu_chain.rs` (it needs `pub(crate)` internals). Adapter-less
