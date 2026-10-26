@@ -428,16 +428,20 @@ pub fn run_grain(params: &GrainGpuParams, src: &[f32]) -> Result<Vec<f32>, GpuEr
     }
 
     let ctx = acquire()?;
-    let params_buf = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grain-params"),
-        contents: bytemuck::cast_slice(&packed),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let src_buf = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grain-src"),
-        contents: bytemuck::cast_slice(src),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    let params_buf = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grain-params"),
+            contents: bytemuck::cast_slice(&packed),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let src_buf = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grain-src"),
+            contents: bytemuck::cast_slice(src),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
     let out_storage = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("grain-out"),
         size: (out_len * 4) as u64,
@@ -509,16 +513,20 @@ pub fn run_halation(params: &HalationGpuParams, src: &[f32]) -> Result<Vec<f32>,
     }
 
     let ctx = acquire()?;
-    let params_buf = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("halation-params"),
-        contents: bytemuck::cast_slice(&packed),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let src_buf = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("halation-src"),
-        contents: bytemuck::cast_slice(src),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    let params_buf = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("halation-params"),
+            contents: bytemuck::cast_slice(&packed),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let src_buf = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("halation-src"),
+            contents: bytemuck::cast_slice(src),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
     let tmp = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("halation-tmp"),
         size: (out_len * 4) as u64,

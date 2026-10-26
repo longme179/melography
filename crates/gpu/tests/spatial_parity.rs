@@ -89,7 +89,10 @@ fn grain_case(
     for (c, g) in cpu.data.iter().zip(&gpu) {
         worst = worst.max((f64::from(*c) - f64::from(*g)).abs());
     }
-    eprintln!("{name}: grain worst |Δ| = {worst:.3e} (k={}, {w}×{h})", params.k);
+    eprintln!(
+        "{name}: grain worst |Δ| = {worst:.3e} (k={}, {w}×{h})",
+        params.k
+    );
     assert!(
         worst <= 1e-3,
         "{name}: grain GPU parity gate failed (worst |Δ| = {worst:.3e} > 1e-3)"
@@ -208,9 +211,7 @@ fn grain_gpu_parity() {
     let b = run_grain(&params, &src.data).expect("gpu grain run 2");
     assert_eq!(a, b, "GPU grain must be deterministic across dispatches");
 
-    eprintln!(
-        "grain parity: worst over all cases = {worst_overall:.3e} (gate ≤ 1e-3)"
-    );
+    eprintln!("grain parity: worst over all cases = {worst_overall:.3e} (gate ≤ 1e-3)");
 }
 
 #[test]
@@ -241,7 +242,10 @@ fn halation_gpu_parity() {
     let warm = reg.by_id("warm-400-negative").expect("warm stock");
 
     // Attenuated variant.
-    let half = Adjustments { halation_intensity: 0.5, ..Adjustments::default() };
+    let half = Adjustments {
+        halation_intensity: 0.5,
+        ..Adjustments::default()
+    };
     worst_overall = worst_overall.max(halation_case(
         "warm-400-negative/intensity-0.5",
         warm,
@@ -262,7 +266,10 @@ fn halation_gpu_parity() {
     ));
 
     // Halation off: every channel inactive → pure pass-through.
-    let off = Adjustments { halation_intensity: 0.0, ..Adjustments::default() };
+    let off = Adjustments {
+        halation_intensity: 0.0,
+        ..Adjustments::default()
+    };
     worst_overall = worst_overall.max(halation_case(
         "warm-400-negative/halation-off",
         warm,
@@ -280,7 +287,5 @@ fn halation_gpu_parity() {
     let b = run_halation(&params, &src.data).expect("gpu halation run 2");
     assert_eq!(a, b, "GPU halation must be deterministic across dispatches");
 
-    eprintln!(
-        "halation parity: worst over all cases = {worst_overall:.3e} (gate ≤ 1e-3)"
-    );
+    eprintln!("halation parity: worst over all cases = {worst_overall:.3e} (gate ≤ 1e-3)");
 }

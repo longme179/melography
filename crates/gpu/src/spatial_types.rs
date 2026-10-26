@@ -230,7 +230,9 @@ mod tests {
             alpha: [0.045, 0.008, 0.0],
             radius: [10, 5, 0],
             tap_offset: [0, 21, 0],
-            taps: (0..31).map(|i| i as f32 * 0.01).collect(),
+            // Power-of-two step: every value exactly representable in
+            // f32 (the layout test compares bits, not tolerances).
+            taps: (0..31).map(|i| i as f32 * 0.125).collect(),
         }
     }
 
@@ -247,6 +249,6 @@ mod tests {
         assert_eq!(p[7].to_bits(), 21, "tap_offset[1]");
         assert_eq!(p[9], 0.045, "alpha[0]");
         assert_eq!(p[12], 0.0, "taps[0]");
-        assert_eq!(p[12 + 30], 0.30, "taps[30]");
+        assert_eq!(p[12 + 30], 3.75, "taps[30]");
     }
 }
