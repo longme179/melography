@@ -16,7 +16,7 @@
 /// Cholesky-correlated layer amplitudes, pixel-area supersampling)
 /// evaluated per pixel on the GPU. The u32 hash stream is bit-portable,
 /// so presence decisions and jitter positions match the CPU exactly;
-//! only the transcendental evaluation (Box–Muller, bump weights) runs
+/// only the transcendental evaluation (Box–Muller, bump weights) runs
 /// in f32 — covered by the parity tolerance, not bit-equality.
 #[derive(Debug, Clone)]
 pub struct GrainGpuParams {
