@@ -335,6 +335,96 @@ mod tests {
         );
     }
 
+        // ── Leg C: diff the GPU vs CPU respond outputs directly ──────
+        // Legs A/B proved: kernel fine, runner fine, grain-on-CPU-respond
+        // fine — yet the composition diverges. The only unmeasured piece:
+        // the GPU [vignette→veiling→excite→respond] output vs the CPU
+        // stages' — a difference there is INVISIBLE to grain-off (the
+        // print clamps lin to [0,1]) but drives the grain's σ(D).
+        {
+            // GPU stages (composition order, veiling ON — Leg A's exact path).
+            let mut cur: Vec<f32> = img.data().to_vec();
+            let vp = pack_vignette_gpu_params(&st.lens, &st.frame, w, h);
+            cur = run_vignette_on(&ctx, &vp, &cur).expect("vignette");
+            let veil = pack_veiling_gpu_params(&st.veiling, st.lens.veiling_amount, w, h);
+            cur = melography_gpu::spatial::run_halation_on(&ctx, &veil, &cur).expect("veiling");
+            let mut fp = pack_film_pixel_params(&st.em, &st.print, &p.adjustments);
+            fp.stage = 1;
+            cur = run_film_pixel_on(&ctx, &fp, &cur).expect("excite");
+            fp.stage = 2;
+            cur = run_film_pixel_on(&ctx, &fp, &cur).expect("respond");
+
+            // CPU stages on the full-image plane (the fixed chain's order).
+            let mut plane = Plane::new(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    let px = img.pixel(x, y);
+                    plane.set3(x, y, [f64::from(px[0]), f64::from(px[1]), f64::from(px[2])]);
+                }
+            }
+            apply_vignette_inplace(&mut plane, 0, h, 0, &st.lens, &st.frame);
+            // veiling (the CPU strip idiom, full-image):
+            if st.veiling_on {
+                let mut tmp = Plane::new(w, h);
+                let mut bloom = Plane::new(w, h);
+                st.veiling.conv_h(&plane, &mut tmp, 0, h);
+                st.veiling.conv_v(&tmp, &mut bloom, 0, h);
+                let s = 0.3 * st.lens.veiling_amount;
+                for y in 0..h {
+                    for x in 0..w {
+                        let e = plane.px64(x, y);
+                        let b = bloom.px64(x, y);
+                        tmp.set3(
+                            x,
+                            y,
+                            [
+                                (1.0 - s) * e[0] + s * b[0],
+                                (1.0 - s) * e[1] + s * b[1],
+                                (1.0 - s) * e[2] + s * b[2],
+                            ],
+                        );
+                    }
+                }
+                for y in 0..h {
+                    for x in 0..w {
+                        plane.set3(x, y, tmp.px64(x, y));
+                    }
+                }
+            }
+            apply_excitation_inplace(
+                &mut plane,
+                0,
+                h,
+                &st.em,
+                p.adjustments.ev,
+                p.adjustments.pre_desaturate,
+            );
+            apply_response_inplace(&mut plane, 0, h, &st.em);
+
+            // Diff.
+            let mut worst = 0.0f64;
+            let mut worst_at = 0usize;
+            let mut over_1e4 = 0usize;
+            for (idx, (c, g)) in plane.data.iter().zip(&cur).enumerate() {
+                let d = (f64::from(*c) - f64::from(*g)).abs();
+                if d > 1e-4 {
+                    over_1e4 += 1;
+                }
+                if d > worst {
+                    worst = d;
+                    worst_at = idx;
+                }
+            }
+            let px = (worst_at / 3) as u32;
+            eprintln!(
+                "legC/respond-output-diff: worst |Δ| = {worst:.3e} at (x={}, y={}, ch={}) [n>1e-4: {over_1e4}]",
+                px % w,
+                px / w,
+                worst_at % 3
+            );
+            let _ = (dmin, dmax);
+        }
+
     /// The leg image (the battery's test image, reused verbatim).
     fn leg_image(w: u32, h: u32, tint: f64) -> melography_core::ImageF32 {
         let mut img = melography_core::ImageF32::alloc(w, h, melography_core::Channels::Rgb, 0.0);
