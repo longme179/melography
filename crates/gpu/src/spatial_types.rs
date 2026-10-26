@@ -256,6 +256,41 @@ pub(crate) fn pack_halation(params: &HalationGpuParams) -> Result<Vec<f32>, Stri
     Ok(v)
 }
 
+/// Packed f32 layout for the vignette kernel:
+///
+/// ```text
+/// [0]      flags (u32 bits): reserved; 0
+/// [1]      w    (u32 bits)
+/// [2]      h    (u32 bits)
+/// [3]      half_diag_mm
+/// [4]      half_fov_rad
+/// [5]      k
+/// [6..6+w)      du per column (mm)
+/// [6+w..6+w+h)  dv per row (mm)
+/// ```
+#[allow(dead_code)]
+pub(crate) fn pack_vignette(params: &VignetteGpuParams) -> Result<Vec<f32>, String> {
+    if params.du.len() != params.w as usize || params.dv.len() != params.h as usize {
+        return Err(format!(
+            "vignette kernel: LUT lengths ({}, {}) do not match w×h ({}, {})",
+            params.du.len(),
+            params.dv.len(),
+            params.w,
+            params.h
+        ));
+    }
+    let mut v: Vec<f32> = Vec::with_capacity(6 + params.du.len() + params.dv.len());
+    v.push(f32::from_bits(0));
+    v.push(f32::from_bits(params.w));
+    v.push(f32::from_bits(params.h));
+    v.push(params.half_diag_mm);
+    v.push(params.half_fov_rad);
+    v.push(params.k);
+    v.extend_from_slice(&params.du);
+    v.extend_from_slice(&params.dv);
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,7 +435,7 @@ mod tests {
         let v = VignetteGpuParams {
             w: 4,
             h: 3,
-            half_diag_mm: 21.63330765,
+            half_diag_mm: 21.633_308,
             half_fov_rad: 0.34906585,
             k: 1.0,
             du: vec![-18.0, -6.0, 6.0, 18.0],
@@ -411,7 +446,7 @@ mod tests {
         assert_eq!(p[0].to_bits(), 0, "flags reserved");
         assert_eq!(p[1].to_bits(), 4, "w bits");
         assert_eq!(p[2].to_bits(), 3, "h bits");
-        assert_eq!(p[3], 21.63330765, "half_diag");
+        assert_eq!(p[3], 21.633_308, "half_diag");
         assert_eq!(p[4], 0.34906585, "half_fov");
         assert_eq!(p[5], 1.0, "k");
         assert_eq!(p[6], -18.0, "du[0]");
@@ -426,37 +461,3 @@ mod tests {
     }
 }
 
-/// Packed f32 layout for the vignette kernel:
-///
-/// ```text
-/// [0]      flags (u32 bits): reserved; 0
-/// [1]      w    (u32 bits)
-/// [2]      h    (u32 bits)
-/// [3]      half_diag_mm
-/// [4]      half_fov_rad
-/// [5]      k
-/// [6..6+w)      du per column (mm)
-/// [6+w..6+w+h)  dv per row (mm)
-/// ```
-#[allow(dead_code)]
-pub(crate) fn pack_vignette(params: &VignetteGpuParams) -> Result<Vec<f32>, String> {
-    if params.du.len() != params.w as usize || params.dv.len() != params.h as usize {
-        return Err(format!(
-            "vignette kernel: LUT lengths ({}, {}) do not match w×h ({}, {})",
-            params.du.len(),
-            params.dv.len(),
-            params.w,
-            params.h
-        ));
-    }
-    let mut v: Vec<f32> = Vec::with_capacity(6 + params.du.len() + params.dv.len());
-    v.push(f32::from_bits(0));
-    v.push(f32::from_bits(params.w));
-    v.push(f32::from_bits(params.h));
-    v.push(params.half_diag_mm);
-    v.push(params.half_fov_rad);
-    v.push(params.k);
-    v.extend_from_slice(&params.du);
-    v.extend_from_slice(&params.dv);
-    Ok(v)
-}

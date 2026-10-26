@@ -135,25 +135,75 @@ fn full_chain_parity_all_stocks_all_stages_on() {
     );
     let reg =
         melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
-    let mut worst_overall = 0.0f64;
+    // Report EVERY stock before asserting (the A2.3 lesson: one panic
+    // with all profiles = one CI round with full information). The
+    // worst pixel position + channel travels with each number.
+    let mut results: Vec<(String, f64, (u32, u32, usize))> = Vec::new();
     for (i, stock) in reg.profiles.iter().enumerate() {
         let img = test_image(112, 84, 0.04 * (i as f64));
         let params = params_for(stock, all_on_lens());
         let cpu = render(&img, &params).expect("cpu render");
         let gpu = render_gpu(&img, &params, &ctx).expect("gpu render");
-        let (worst, _) = max_delta(&cpu, &gpu);
+        let (worst, at) = max_delta(&cpu, &gpu);
+        let px = (at / 3) as u32;
+        let pos = (px % img.width(), px / img.width(), at % 3);
         eprintln!(
-            "{}: full-chain worst |Δ| = {worst:.3e} (all stages on, 112×84)",
-            stock.id
+            "{}: full-chain worst |Δ| = {worst:.3e} at (x={}, y={}, ch={}) (all stages on, 112×84)",
+            stock.id, pos.0, pos.1, pos.2
         );
+        results.push((stock.id.clone(), worst, pos));
+    }
+    let worst_overall = results.iter().map(|r| r.1).fold(0.0f64, f64::max);
+    eprintln!("all-stocks battery worst |Δ| = {worst_overall:.3e}");
+    for (id, worst, pos) in &results {
         assert!(
             worst <= TOL,
-            "{}: full-chain parity failed (worst |Δ| = {worst:.3e} > {TOL})",
-            stock.id
+            "{id}: full-chain parity failed (worst |Δ| = {worst:.3e} > {TOL}) at (x={}, y={}, ch={})",
+            pos.0, pos.1, pos.2
         );
-        worst_overall = worst_overall.max(worst);
     }
-    eprintln!("all-stocks battery worst |Δ| = {worst_overall:.3e}");
+}
+
+/// Mono-specific isolation (the round-4/6 finding: classic-monochrome-400
+/// diverges while every warm case sits at 1e-7 — each spatial stage off
+/// for the mono stock pins WHICH stage carries the mono delta; this leg
+/// only REPORTS, the battery above owns the verdict).
+#[test]
+fn full_chain_parity_mono_stage_isolation() {
+    let Some(ctx) = ctx() else {
+        eprintln!("SKIP: no GPU adapter here");
+        return;
+    };
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
+    let stock = reg.by_id("classic-monochrome-400").expect("mono stock");
+    let img = test_image(112, 84, 0.02);
+    let cases: &[(&str, f64, f64, f64)] = &[
+        ("mono/vignette-off", 0.0, 0.5, 1.0),
+        ("mono/veiling-off", 0.45, 0.0, 1.0),
+        ("mono/grain-off", 0.45, 0.5, 0.0),
+        ("mono/all-spatial-off", 0.0, 0.0, 0.0),
+    ];
+    for (name, vign, veil, grain) in cases {
+        let lens = LensParams {
+            vignette_amount: *vign,
+            veiling_amount: *veil,
+            veiling_sigma_mm: 0.35,
+            ..LensParams::default()
+        };
+        let mut params = params_for(stock, lens);
+        params.adjustments.grain_intensity = *grain;
+        let cpu = render(&img, &params).expect("cpu render");
+        let gpu = render_gpu(&img, &params, &ctx).expect("gpu render");
+        let (worst, at) = max_delta(&cpu, &gpu);
+        let px = (at / 3) as u32;
+        eprintln!(
+            "{name}: worst |Δ| = {worst:.3e} at (x={}, y={}, ch={})",
+            px % img.width(),
+            px / img.width(),
+            at % 3
+        );
+    }
 }
 
 #[test]
