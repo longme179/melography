@@ -86,16 +86,36 @@ fn grain_case(
     let params = field.gpu_params(frame, w, h);
     let gpu = run_grain(&params, &src.data).expect("gpu grain dispatch");
     let mut worst = 0.0f64;
-    for (c, g) in cpu.data.iter().zip(&gpu) {
-        worst = worst.max((f64::from(*c) - f64::from(*g)).abs());
+    let mut worst_at = (0u32, 0u32, 0usize);
+    let mut over_1e5 = 0usize;
+    let mut over_1e4 = 0usize;
+    for (idx, (c, g)) in cpu.data.iter().zip(&gpu).enumerate() {
+        let d = (f64::from(*c) - f64::from(*g)).abs();
+        if d > 1e-5 {
+            over_1e5 += 1;
+        }
+        if d > 1e-4 {
+            over_1e4 += 1;
+        }
+        if d > worst {
+            worst = d;
+            let px = (idx / 3) as u32;
+            worst_at = (px % w, px / w, idx % 3);
+        }
     }
     eprintln!(
-        "{name}: grain worst |Δ| = {worst:.3e} (k={}, {w}×{h})",
+        "{name}: grain worst |Δ| = {worst:.3e} at (x={}, y={}, ch={}) [n>1e-5: {over_1e5}, n>1e-4: {over_1e4}] (k={}, {w}×{h})",
+        worst_at.0,
+        worst_at.1,
+        worst_at.2,
         params.k
     );
     assert!(
         worst <= 1e-3,
-        "{name}: grain GPU parity gate failed (worst |Δ| = {worst:.3e} > 1e-3)"
+        "{name}: grain GPU parity gate failed (worst |Δ| = {worst:.3e} > 1e-3) at (x={}, y={}, ch={})",
+        worst_at.0,
+        worst_at.1,
+        worst_at.2
     );
     worst
 }
