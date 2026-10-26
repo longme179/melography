@@ -217,6 +217,37 @@ reachable spectrum, the label, and the exact export. Perf legs added
 (`resolve-fast`, `preview-fast-threaded-2048x1536`) — the §4 re-pin
 re-measure happens on the owner's machine, as with A2.1.
 
+**Progress (session 18, A2.3 — GPU spatial kernels):** shipped.
+`melography-gpu::spatial` adds the two spatial stages the M2 pixel
+kernel left on the CPU, as WGSL compute in the `film_pixel`
+parity-harness pattern (plain-data types in `spatial_types.rs`, always
+compiled so `melography-film` can pack without the graphics stack):
+**grain gather** — the FULL §G model (not the A2.2 approximation —
+full-quality grain at preview speed; the fast field stays the
+no-adapter CPU path) evaluated per pixel with k×k pixel-area
+supersampling; the u32 hash stream (`hash.rs`, wrapping u32 arithmetic
+only) is bit-portable, presence ships as the exact u32 threshold
+`ceil(p·2^32)` (draw-order, jitter uniforms and presence decisions
+match the CPU bit-for-bit — validated in a repo-external Python
+cross-check before any Rust was written), transcendentals in f32 inside
+the ≤ 1e-3 parity tolerance; boundary flips are benign by construction
+(bump C¹ at t=1; reach exceeds every radius by a full cell); and
+**halation** — the §C2 separable h+v convolution, per-channel unit-DC
+taps + α, zero padding, exactly the CPU `apply_halation` skip
+semantics for inactive/identity channels. Bridges:
+`GrainField::gpu_params()` (calibrated a_norm, Cholesky, k rule
+resolved on the CPU in f64) and `gpu_bridge::pack_halation_gpu_params`.
+Gates: naga offline validation on every OS (the `log10` lesson — no
+adapter needed), CPU↔GPU parity ≤ 1e-3 on CI adapters (all 5 stocks ×
+grain k∈{1,2,4} incl. a tall-image native-scale case, σ(D)=0 dark
+region, disabled pass-through, halation attenuated/off/preview-scale,
+dispatch determinism bit-equal), adapter-less environments skip
+honestly. Perf leg `spatial_perf` (#[ignore]d, owner-run release) —
+the §4 re-pin for the GPU side happens there, as with A2.1/A2.2.
+**Not in this slice** (next step): the app wiring — persistent GPU
+context, full-chain GPU preview composition (pixel kernel + spatial
+kernels + vignette), adapter policy (A4) and the fallback contract.
+
 **A2 · Film-chain preview speed (the measured 3.4–4.4 s vs ≤ 50 ms / 400 ms
 budget — executing the M2 §5 plan in spec order).**
 1. **Strip threading** — embarrassingly parallel; the tiled≡mono gate already
@@ -343,18 +374,19 @@ budgets stay provisional until those devices run the S1 harness.
 See `docs/research/spikes/{S1,S2,S3,S4}_REPORT.md` + `HEIF_PROBE.md`
 for full context; every number above is reproducible from the repo.
 
-### M2 measurements (2026-10-24, session 04) — film chain
+### Film-chain performance (M2 baseline 2026-10-24; A2 re-pin on the owner's 12-core machine, 2026-10-26)
 
 Dev sandbox (linux x86_64, **2 cores**, release build; CI re-runs the
-gates on all 3 OSes; owner reference machines still pending).
+gates on all 3 OSes; the owner's 12-core machine is the A2 re-pin
+reference — measured 2026-10-26 after PRs #37/#38).
 
 | Line | M2 evidence (worst/best stock) | Status |
 |---|---|---|
-| Film resolve (per param change, incl. grain self-calibration) | 1.3–2.9 ms | fine — cached per param set |
-| Preview re-render p50 (2048×1536, full film chain) | **3.4–4.4 s** vs ≤ 50 ms interactions / ≤ 400 ms cold | **shortfall — documented cause + fast-path plan** (quality report §5: grain gather at pixel-area supersampling ≈ 225 cell-visits/px; the spec's correlated-noise fast path + threading + GPU spatial kernels are the plan) |
-| Export 24 MP (full film chain, CPU, tiled strips) | **8.3–18.4 s** vs ≤ 20 s CPU | **within budget** (2-core worst case) |
+| Film resolve (per param change, incl. grain self-calibration) | owner 12-core: full 0.8–2.9 ms · fast-path 4.0–5.4 ms (incl. its one-shot self-calibration) | fine — cached per param set; the fast path's extra ~2–4 ms is one-shot per param set, ≪ the render it precedes |
+| Preview re-render p50 (2048×1536, full film chain) | owner 12-core, A2.1+A2.2: sequential 2.8–3.8 s → threaded 0.49–0.58 s → fast grain 0.32–0.47 s vs ≤ 50 ms interactions / ≤ 400 ms cold | **A2.1+A2.2 shipped = 7–10× total; 2/5 stocks inside the ≤ 400 ms cold budget, worst +18 % (cool-800-night 473 ms) — A2.3 kernels shipped (parity-gated); the full-chain GPU preview wiring is the remaining plan leg** |
+| Export 24 MP (full film chain, CPU, tiled strips) | owner 12-core: 7.2–14.8 s vs ≤ 20 s CPU | **within budget** (sequential by design, R-REN-2 memory-first) |
 | §L statistical gates (grain RMS/PSD/ρ, halation edge-spread, zoom, determinism, tiled≡mono) | all green; 2 real seam bugs caught + fixed by the tiled gate | **M2 exit criterion met** |
-| GPU film pixel-kernel parity (5 stocks × 3 paths × 2 polarities × 2 layouts) | gate ≤ 1e-3 on CI adapters (macos/windows); spatial-stage kernels = M3/M4 follow-up | pixel scope green; spatial pending (documented) |
+| GPU film pixel-kernel parity (5 stocks × 3 paths × 2 polarities × 2 layouts) + spatial kernels (A2.3) | pixel gate ≤ 1e-3 on CI adapters (macos/windows); spatial (grain gather k∈{1,2,4} + halation cases + determinism) same gate since session 18 | pixel scope green; **spatial green (A2.3)** |
 
 Full evidence: `docs/quality/M2_FILM_QUALITY_REPORT.md` (reproducible via
 `cargo test --release -p melography-film --test gates -- --ignored`).

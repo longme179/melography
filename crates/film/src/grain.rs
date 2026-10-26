@@ -29,6 +29,7 @@ use crate::frame::FilmFrame;
 use crate::hash::RandStream;
 use crate::optics::Plane;
 use crate::profile::{GrainParams, LayerLayout, SigmaCurve, StockProfile};
+use melography_gpu::spatial_types::GrainGpuParams;
 
 /// Standard aperture for RMS granularity (mm) — grain.md §4.
 pub const APERTURE_MM: f64 = 0.048;
@@ -108,6 +109,117 @@ impl GrainField {
         // density read needs ±1 px more.
         let mm = self.r_max_mm + self.cell_mm;
         (mm / mm_per_pixel).ceil() as u32 + 1
+    }
+
+    /// A2.3 — pack this resolved field for the WGSL grain-gather kernel
+    /// (plain data, `melography-gpu::spatial_types`). The GPU evaluates
+    /// the same full model in f32; the u32 hash stream is bit-portable,
+    /// and the presence probability is shipped as the exact u32
+    /// threshold `ceil(p·2^32)` so presence decisions match the CPU's
+    /// f64 comparison bit-for-bit. The parity test owns the tolerance.
+    ///
+    /// Precision contract (CI round 3, k = 1 case): absolute film
+    /// coordinates are ~18 mm where f32 eps (1.07e-6 mm) is a third of
+    /// a grain radius, so the gather runs in CELL units through
+    /// compensated (hi + lo) constants, and the cell-centre density
+    /// read is guarded by INTEGER cell-index ranges — the CPU's exact
+    /// f64 bilinear-guard decisions, direct-evaluated here.
+    #[must_use]
+    pub fn gpu_params(&self, frame: &FilmFrame, w: u32, h: u32) -> GrainGpuParams {
+        let thr_f = (self.presence_p * 4_294_967_296.0).ceil();
+        let presence_always = thr_f >= 4_294_967_296.0;
+        let k = ((frame.mm_per_pixel / 0.006).round() as u32).clamp(1, 4);
+        let w64 = f64::from(w);
+        let h64 = f64::from(h);
+        let mmpp = frame.mm_per_pixel;
+        let cell = self.cell_mm;
+        // Per-axis position LUTs (CI rounds 3–7): the sample position of
+        // every column (u) and row (v) in CELL units as exact
+        // (integer, fraction) pairs, from the same `pixel_to_mm` formula
+        // the reference uses. Absolute film coordinates are ~18 mm where
+        // f32 eps is a third of a grain radius, and compensated (hi+lo)
+        // shader arithmetic proved vulnerable to backend fast-math
+        // contraction (Metal vs WARP diverged 5× on the same WGSL); the
+        // LUTs leave the shader only small-number math.
+        let m = mmpp / cell;
+        let mut u_pos = Vec::with_capacity(w as usize * 2);
+        for x in 0..w {
+            let u = 18.0 + (f64::from(x) + 0.5 - w64 * 0.5) * mmpp;
+            let q = u / cell;
+            let qi = q.floor() as i32;
+            u_pos.push(f32::from_bits(qi as u32));
+            u_pos.push((q - f64::from(qi)) as f32);
+        }
+        let mut v_pos = Vec::with_capacity(h as usize * 2);
+        for y in 0..h {
+            let v = 12.0 + (f64::from(y) + 0.5 - h64 * 0.5) * mmpp;
+            let q = v / cell;
+            let qi = q.floor() as i32;
+            v_pos.push(f32::from_bits(qi as u32));
+            v_pos.push((q - f64::from(qi)) as f32);
+        }
+        // Integer density-guard ranges: fx/fy-of-the-cell-centre in
+        // [0, w-1] x [0, h-1], decided with the EXACT CPU formula and
+        // corrected by direct evaluation (the initial closed form is
+        // real-algebra-exact; f64 rounding can shift it by one cell).
+        let fx_of = |ix: i64| ((ix as f64 + 0.5) * cell - 18.0) / mmpp + w64 * 0.5;
+        let fy_of = |iy: i64| ((iy as f64 + 0.5) * cell - 12.0) / mmpp + h64 * 0.5;
+        let mut ix_min = ((18.0 - w64 * 0.5 * mmpp) / cell - 0.5).ceil() as i64;
+        while fx_of(ix_min) < 0.0 {
+            ix_min += 1;
+        }
+        while fx_of(ix_min - 1) >= 0.0 {
+            ix_min -= 1;
+        }
+        let mut ix_max = ((18.0 + (w64 * 0.5 - 1.0) * mmpp) / cell - 0.5).floor() as i64;
+        while fx_of(ix_max) > w64 - 1.0 {
+            ix_max -= 1;
+        }
+        while fx_of(ix_max + 1) <= w64 - 1.0 {
+            ix_max += 1;
+        }
+        let mut iy_min = ((12.0 - h64 * 0.5 * mmpp) / cell - 0.5).ceil() as i64;
+        while fy_of(iy_min) < 0.0 {
+            iy_min += 1;
+        }
+        while fy_of(iy_min - 1) >= 0.0 {
+            iy_min -= 1;
+        }
+        let mut iy_max = ((12.0 + (h64 * 0.5 - 1.0) * mmpp) / cell - 0.5).floor() as i64;
+        while fy_of(iy_max) > h64 - 1.0 {
+            iy_max -= 1;
+        }
+        while fy_of(iy_max + 1) <= h64 - 1.0 {
+            iy_max += 1;
+        }
+        let sat = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        GrainGpuParams {
+            enabled: self.enabled,
+            layers_mono: self.layers == LayerLayout::Monochrome,
+            mm_per_pixel: frame.mm_per_pixel as f32,
+            cells_per_mm: self.cells_per_mm as f32,
+            cell_mm: self.cell_mm as f32,
+            mu_r: self.mu_r as f32,
+            sigma_r: self.sigma_r as f32,
+            r_max_mm: self.r_max_mm as f32,
+            chol: self.chol.map(|v| v as f32),
+            a_norm: self.a_norm.map(|v| v as f32),
+            seed: self.seed,
+            presence_thr: if presence_always { 0 } else { thr_f as u32 },
+            presence_always,
+            w,
+            h,
+            k,
+            m: m as f32,
+            u_pos,
+            v_pos,
+            guard_ix_min: sat(ix_min),
+            guard_ix_max: sat(ix_max),
+            guard_iy_min: sat(iy_min),
+            guard_iy_max: sat(iy_max),
+            curve_density: self.sigma_curve.density.iter().map(|v| *v as f32).collect(),
+            curve_sigma: self.sigma_curve.sigma.iter().map(|v| *v as f32).collect(),
+        }
     }
 
     /// One-shot exact amplitude calibration: measure the aperture statistic

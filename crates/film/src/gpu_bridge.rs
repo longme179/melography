@@ -12,6 +12,7 @@ use crate::emulsion::{Adjustments, CrossProcessMode, Emulsion};
 use crate::print::Print;
 use crate::profile::{InversionPath, LayerLayout, Polarity};
 use melography_gpu::film_pixel_types::{CurveGpu, FilmPixelGpuParams};
+use melography_gpu::spatial_types::HalationGpuParams;
 
 fn curve_gpu(spline: &crate::curves::MonotoneSpline) -> CurveGpu {
     let (xs, ys, ms) = spline.control_data();
@@ -76,5 +77,40 @@ pub fn pack_film_pixel_params(
         scanner_matrix: print.scanner_matrix.0.map(|v| v as f32),
         hd_curves: em.splines.iter().map(curve_gpu).collect(),
         paper_curves: print.paper.iter().map(curve_gpu).collect(),
+    }
+}
+
+/// A2.3 — pack the resolved halation kernels (§C2) for the WGSL
+/// h+v convolution. A channel is ACTIVE iff its layer is active for the
+/// layout AND `alpha > 0` AND the kernel is not the identity — exactly
+/// the CPU `apply_halation` skip condition (inactive channels
+/// pass through untouched; sub-pixel halos are skipped there too, so
+/// the packer must not smuggle in a constant-term approximation).
+pub fn pack_halation_gpu_params(em: &Emulsion, w: u32, h: u32) -> HalationGpuParams {
+    let active_layers: &[usize] = match em.layers {
+        LayerLayout::Color => &[0, 1, 2],
+        LayerLayout::Monochrome => &[0],
+    };
+    let mut alpha = [0.0f32; 3];
+    let mut radius = [0u32; 3];
+    let mut tap_offset = [0u32; 3];
+    let mut taps: Vec<f32> = Vec::new();
+    for c in 0..3 {
+        let hk = &em.halation[c];
+        if !active_layers.contains(&c) || hk.alpha <= 0.0 || hk.kernel.is_identity() {
+            continue;
+        }
+        alpha[c] = hk.alpha as f32;
+        radius[c] = hk.kernel.radius_px;
+        tap_offset[c] = taps.len() as u32;
+        taps.extend(hk.kernel.taps.iter().map(|t| *t as f32));
+    }
+    HalationGpuParams {
+        w,
+        h,
+        alpha,
+        radius,
+        tap_offset,
+        taps,
     }
 }
