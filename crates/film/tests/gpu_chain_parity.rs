@@ -133,8 +133,8 @@ fn full_chain_parity_all_stocks_all_stages_on() {
         "adapter: {} ({}, {})",
         ctx.report.name, ctx.report.backend, ctx.report.device_type
     );
-    let reg = melography_presets::StockRegistry::open(&repo_root().join("profiles"))
-        .expect("profiles");
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
     let mut worst_overall = 0.0f64;
     for (i, stock) in reg.profiles.iter().enumerate() {
         let img = test_image(112, 84, 0.04 * (i as f64));
@@ -162,8 +162,8 @@ fn full_chain_parity_stage_isolation() {
         eprintln!("SKIP: no GPU adapter here");
         return;
     };
-    let reg = melography_presets::StockRegistry::open(&repo_root().join("profiles"))
-        .expect("profiles");
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
     let stock = reg.by_id("warm-400-negative").expect("warm stock");
     let img = test_image(96, 72, 0.03);
 
@@ -194,8 +194,8 @@ fn full_chain_parity_supersampling_regimes() {
         eprintln!("SKIP: no GPU adapter here");
         return;
     };
-    let reg = melography_presets::StockRegistry::open(&repo_root().join("profiles"))
-        .expect("profiles");
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
     let stock = reg.by_id("warm-400-negative").expect("warm stock");
     // Tall FitHeight images pin the k rule: 48×2000 → 12 µm/px (k=2),
     // 24×4000 → 6 µm/px (k=1, native grain scale). Veiling stays OFF
@@ -220,8 +220,8 @@ fn gpu_chain_determinism() {
         eprintln!("SKIP: no GPU adapter here");
         return;
     };
-    let reg = melography_presets::StockRegistry::open(&repo_root().join("profiles"))
-        .expect("profiles");
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
     let stock = reg.by_id("cool-800-night").expect("cool stock");
     let img = test_image(96, 72, 0.05);
     let params = params_for(stock, all_on_lens());
@@ -240,8 +240,8 @@ fn gpu_chain_disabled_film_is_identity() {
         eprintln!("SKIP: no GPU adapter here");
         return;
     };
-    let reg = melography_presets::StockRegistry::open(&repo_root().join("profiles"))
-        .expect("profiles");
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
     let stock = reg.by_id("classic-monochrome-400").expect("mono stock");
     let mut params = params_for(stock, all_on_lens());
     params.adjustments.enabled = false;

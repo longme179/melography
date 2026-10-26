@@ -926,8 +926,13 @@ pub fn set_settings(
     st.settings = settings.clamped();
     // A2.4: mirror the GPU intent (enabled + adapter policy); a changed
     // adapter also drops the shared GPU context (the next render rebinds
-    // and re-arms the session circuit breaker).
-    st.gpu.sync_from_settings(&st.settings);
+    // and re-arms the session circuit breaker). Scoped destructure: gpu
+    // (mut) and settings (shared) are disjoint fields of one guard —
+    // two reborrows through DerefMut would be E0502.
+    {
+        let EditorState { gpu, settings, .. } = &mut *st;
+        gpu.sync_from_settings(settings);
+    }
     st.settings
         .save(&st.library_root().join("settings.json"))
         .map_err(|e| AppError::new("settings.save", e.to_string()))?;

@@ -127,13 +127,6 @@ pub fn render_gpu(
 mod tests {
     use super::*;
 
-    fn repo_root() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .unwrap()
-    }
-
     fn test_image(w: u32, h: u32, tint: f64) -> ImageF32 {
         let mut img = ImageF32::alloc(w, h, Channels::Rgb, 0.0);
         let data = img.data_mut();
@@ -172,9 +165,14 @@ mod tests {
             }
             Err(e) => panic!("gpu context init failed: {e}"),
         };
-        let reg = melography_presets::StockRegistry::open(&repo_root().join("profiles"))
-            .expect("profiles");
-        let stock = reg.by_id("soft-pastel-160").expect("pastel stock");
+        // The in-crate fixture profile (NOT the presets registry): the
+        // self-dev-dependency that turns `gpu-chain` on for tests puts a
+        // SECOND copy of this crate in the dev graph, and mixing
+        // `crate::` types with registry-loaded profiles crosses the two
+        // copies (E0308). The split≡fused equivalence is stock-agnostic
+        // pixel math; the all-stocks parity battery lives in
+        // tests/gpu_chain_parity.rs against the real registry.
+        let stock = crate::profile::testing::test_profile();
         let img = test_image(96, 72, 0.03);
         // Spatial stages off keeps the split path pure pixel math.
         let lens = crate::optics::LensParams {

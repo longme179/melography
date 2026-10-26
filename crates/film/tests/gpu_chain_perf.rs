@@ -89,8 +89,8 @@ fn gpu_full_chain_perf() {
             .unwrap_or(0)
     );
 
-    let reg = melography_presets::StockRegistry::open(&repo_root().join("profiles"))
-        .expect("profiles");
+    let reg =
+        melography_presets::StockRegistry::open(&repo_root().join("profiles")).expect("profiles");
 
     for (w, h, label) in [
         (2048u32, 1536u32, "preview-2048x1536"),
