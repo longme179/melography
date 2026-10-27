@@ -123,7 +123,18 @@ fn respond(x: vec3<f32>) -> vec3<f32> {
         fg = clamp(fg, f_lo[li], f_hi[li]);
         d[li] = params[35u + li] + fg;   // d_min + response-above-fog
     }
-    if (isMono()) { d = vec3<f32>(d.x); }
+    // Mono plane contract: the CPU respond writes ONLY layer 0 — the
+    // density plane is [D, 0, 0] (emulsion.rs `d = [0.0; 3]` + the
+    // `layers = &[0]` loop). Replicating D into channels 1/2 here broke
+    // the A2.4 full-chain parity for classic-monochrome-400 by 3.9e-2:
+    // the print stage reads layer 0 only (so the final image was
+    // unaffected and every post-print gate stayed green), but the grain
+    // stage reads the density-plane LUMINANCE 0.25/0.5/0.25 — the CPU
+    // σ(D) saw 0.25·D while this kernel's replication made the GPU see
+    // D, a constant ~35% amplitude bias on every mono grain cell (CI
+    // rounds 8–15; caught by gpu_chain_parity, pinned by the Leg A/B/C
+    // diagnostics in film/src/gpu_chain.rs). The shader mirrors the CPU
+    // plane exactly instead — no replication.
 
     // §D crosstalk: D += C·D_off (scale from §E coupling).
     let ct = 26u;

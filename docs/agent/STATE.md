@@ -1,6 +1,6 @@
 # MELOGRAPHY — Agent State
 
-**Updated:** 2026-10-26 (session 20 — A2.3 sits in PR #39 awaiting owner review after a CI retrigger cleared a macOS DNS flake; this session implements A2.4 full-chain GPU preview wiring on `agent/m5a24-gpu-wiring`, stacked on PR #39) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
+**Updated:** 2026-10-27 (session 21 — PR #40's mono parity divergence root-caused and fixed: the WGSL respond replicated the mono density into ch 1/2 while the CPU writes [D, 0, 0]; the grain σ(D) luminance read saw D vs 0.25·D — CPU behavior unchanged, the shader now mirrors the CPU plane; session log 21) · **Maintainer:** the acting agent · **Rule:** ≤250 lines, no stale claims — every claim must be checkable against the repository/remote right now.
 
 ## Current milestone
 
@@ -32,7 +32,21 @@ Settings Graphics picker + status rows (`gpu_status`), full-chain
 parity ≤ 2e-3 vs the CPU monolithic render (all stocks, stage
 isolation, k regimes, determinism, identity), and the owner-run
 `gpu_chain_perf` evidence leg. A3–A5 (minus A4's policy core, now
-shipped) remain.
+shipped) remain. **Session 21 (2026-10-27) closed the CI saga:** the
+gate's round 4 already caught+fixed a dead-halation M2 bug (session 20
+log); rounds 8–15 chased a second, mono-only 3.924e-2 divergence —
+root cause: the WGSL respond REPLICATED the mono density into channels
+1/2 while the CPU writes `[D, 0, 0]` (print reads layer 0 only, so
+every post-print gate stayed green, but the grain σ(D) luminance read
+saw D vs 0.25·D — a constant −35% amplitude bias on every mono grain
+cell; classic-monochrome-400's C3 anchor saturates its H&D shoulder,
+making D = 1.84 flat and the bias config-invariant). Fix: the shader
+mirrors the CPU plane (no replication); CPU behavior deliberately
+unchanged; the mono model follow-ups (C3 anchor over inactive layers,
+σ-curve knots unreachable via 0.25·D) documented in FILM_MODEL §G for
+an owner decision. The Leg A/B/C diagnostics stay as standing tests —
+legC now gates the pre-print respond plane (≤ 1e-3), the one place
+print-clamped divergence can hide.
 
 ## Session 20 delivered (this PR — A2.4 full-chain GPU preview wiring)
 
@@ -82,11 +96,15 @@ shipped) remain.
   veiling blend 1.1e-7, halation blend-flag value-identity) + WGSL lint
   over all five shaders (`a24_wgsl_lint.py`) + tsc/vite/i18n/contrast/
   blit gates: ALL PASS
-- **CI (this PR): pending first run** — the stacked A2.3 head (PR #39,
-  commit 1d78e3f) is 38/38 green after the session-19 retrigger (the
-  macOS ort-sys DNS flake); Metal spatial parity there: grain worst
-  8.583e-6, halation 2.384e-7. This PR adds the full-chain gates —
-  first CI round will report the composition numbers honestly
+- **CI (this PR): 15 rounds through session 20/21** — round 4 caught
+  the dead-halation M2 bug (fixed); rounds 8–15 the mono divergence
+  (root cause + fix in session 21: WGSL mono respond replication vs
+  the CPU [D,0,0] plane; grain σ(D) saw D vs 0.25·D — see session log
+  21). Expected on the fix head: mono battery ~1e-5 (kernel measured
+  8.3e-7–1.2e-6 by legB; the saturated spline region is flat-exact on
+  both sides). The stacked A2.3 head (PR #39, commit 1d78e3f) is
+  38/38 green after the session-19 retrigger; Metal spatial parity
+  there: grain worst 8.583e-6, halation 2.384e-7.
 - `validate_docs.py` — PASS locally (PLAN/FILM_MODEL/session log)
 - Sandbox limits (unchanged): node/npm/python3 present; **no cargo** —
   Rust fmt/clippy/tests verified by CI; owner machine is the runtime
@@ -103,14 +121,15 @@ resumes.
 
 ## Next five atomic actions
 
-1. Owner reviews **PR #39 (A2.3 GPU spatial kernels)** — CI is the Rust
-   verifier (sandbox has no cargo)
+1. CI green on the PR #40 fix head → owner review of **PR #39 (A2.3)**
+   then **PR #40 (A2.4, stacked)** — no merge without approval
 2. Owner runs the GPU perf evidence on real hardware:
-   `cargo test --release -p melography-gpu --test spatial_perf
-   -- --ignored --nocapture` → PLAN §4 GPU-side re-pin
-3. Full-chain GPU preview wiring (persistent context, pixel + spatial
-   kernels + vignette composition, CPU fallback contract) — the last
-   A2 leg toward the re-pinned §4 preview budget
+   `cargo test --release -p melography-film --features gpu-chain
+   --test gpu_chain_perf -- --ignored --nocapture` → PLAN §4 GPU-side
+   re-pin (plus the A2.3 `spatial_perf` leg)
+3. Owner decision (documented in FILM_MODEL §G, not blocking): the mono
+   C3-anchor convention (inactive layers' logs saturate the H&D) and
+   the σ(D) luminance read (0.25·D vs d₀ for mono)
 4. A3 Tier-1a camera-log→Rec709 baker (ARRI LogC3/LogC4, S-Log3, V-Log,
    CLog3, F-Log from published transfer functions; golden vectors;
    vendor LUTs dev-time-only, never bundled)

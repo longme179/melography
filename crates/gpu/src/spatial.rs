@@ -160,7 +160,12 @@ fn srcBilinearClamped(fx0: f32, fy0: f32) -> vec3<f32> {
 // Luminance density at a lattice cell centre: 0 outside the image
 // (the INTEGER guard — bit-matching the CPU's f64 bilinear-guard
 // decision; a f32 guard could flip at the edge and jump the read by
-// the full edge density), clamped bilinear inside.
+// the full edge density), clamped bilinear inside. The 0.25/0.5/0.25
+// luminance mix mirrors the CPU `apply` cache-build exactly — for
+// monochrome stocks the caller's density plane is [D, 0, 0] (the CPU
+// respond writes layer 0 only), so this reads 0.25·D on BOTH sides;
+// a replicated [D, D, D] plane here would bias every mono grain
+// amplitude (the A2.4 CI rounds 8–15 lesson).
 fn cellDensityLum(ix: i32, iy: i32) -> f32 {
     if (ix < i32At(26u) || ix > i32At(27u) || iy < i32At(28u) || iy > i32At(29u)) {
         return 0.0;

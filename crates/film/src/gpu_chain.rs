@@ -205,15 +205,28 @@ mod tests {
         );
     }
 
-    /// A2.4 mono-divergence diagnostics (CI rounds 8–11): the standalone
-    /// grain legs pass at ~1e-6 while the composition diverges at 3.9e-2
-    /// for classic-monochrome-400 only. Leg A: the composition rebuilt
-    /// dispatch-by-dispatch but grain through the STANDALONE fresh-acquire
-    /// runner. Leg B: standalone grain fed the REAL respond output (CPU
-    /// stages run manually). Between them one must flip: A flips => the
-    /// persistent-context dispatch; B flips => the respond-output VALUES.
+    /// A2.4 mono-divergence diagnostics (CI rounds 8–15) — RESOLVED.
+    /// The standalone grain legs pass at ~1e-6 while the composition
+    /// diverged at 3.924e-2 for classic-monochrome-400 ONLY, identically
+    /// in every lens config (vignette/veiling on or off) — the smoking
+    /// gun that the delta could not ride the density field. Root cause
+    /// (Legs A/B ran on CI in rounds 12–13; Leg C confirmed by code):
+    /// the WGSL respond stage replicated the mono density into channels
+    /// 1/2 (`d = vec3(d.x)`) while the CPU writes [D, 0, 0] — the print
+    /// stage reads layer 0 only (grain-off parity 1.2e-7, every
+    /// post-print gate green), but the grain σ(D) reads the plane
+    /// luminance 0.25/0.5/0.25: CPU σ saw 0.25·D, GPU saw D. With this
+    /// stock's saturated H&D shoulder (D = 1.84 flat over the whole
+    /// test image — m_exc sums RGB but the C3 anchor averages the logs
+    /// of all three layers, so exposure_scale ≈ 1.6e6 saturates the
+    /// curve) that is a CONSTANT ~35% amplitude bias on every mono
+    /// grain cell — hence the config-invariant 3.924e-2. Fix: the
+    /// shader now mirrors the CPU plane ([D, 0, 0], no replication).
+    /// The legs stay as permanent diagnostics — they pin exactly this
+    /// failure class (print-masked pixel-stage divergence) that no
+    /// post-print gate can see.
     #[test]
-    fn mono_composition_legs_a_b() {
+    fn mono_composition_legs() {
         use crate::optics::LensParams;
         let ctx = match melography_gpu::context::init(&melography_gpu::context::AdapterPolicy::Auto)
         {
@@ -333,14 +346,15 @@ mod tests {
         eprintln!(
             "legB/standalone-grain-on-respond-output: worst |Δ| = {worst:.3e} at sample {worst_at} (density range {dmin:.4}..{dmax:.4})"
         );
-    }
 
         // ── Leg C: diff the GPU vs CPU respond outputs directly ──────
-        // Legs A/B proved: kernel fine, runner fine, grain-on-CPU-respond
-        // fine — yet the composition diverges. The only unmeasured piece:
-        // the GPU [vignette→veiling→excite→respond] output vs the CPU
-        // stages' — a difference there is INVISIBLE to grain-off (the
-        // print clamps lin to [0,1]) but drives the grain's σ(D).
+        // Legs A/B on CI: kernel fine, runner fine, grain-on-CPU-respond
+        // fine — yet the composition diverged. Leg C measures the one
+        // unmeasured piece: the GPU [vignette→veiling→excite→respond]
+        // output vs the CPU stages' — a difference there is INVISIBLE to
+        // grain-off (the print clamps lin to [0,1]) but drives the
+        // grain's σ(D). This is exactly where the mono replication bug
+        // lived; the assert below now gates this failure class.
         {
             // GPU stages (composition order, veiling ON — Leg A's exact path).
             let mut cur: Vec<f32> = img.data().to_vec();
@@ -418,9 +432,17 @@ mod tests {
             let px = (worst_at / 3) as u32;
             eprintln!(
                 "legC/respond-output-diff: worst |Δ| = {worst:.3e} at (x={}, y={}, ch={}) [n>1e-4: {over_1e4}]",
-                px % w,
-                px / w,
-                worst_at % 3
+                px % w, px / w, worst_at % 3
+            );
+            // Gate: the pre-print density plane is where print-clamped
+            // divergence hides (the mono lesson) — this bound sits far
+            // above f32-vs-f64 composition noise (~1e-5 expected) and
+            // 40x below the 3.9e-2 it now catches.
+            assert!(
+                worst <= 1e-3,
+                "legC: GPU vs CPU [vignette→veiling→excite→respond] outputs diverged \
+                 (worst |Δ| = {worst:.3e} at sample {worst_at}) — a print-clamped \
+                 pixel-stage divergence the final-image gates cannot see"
             );
             let _ = (dmin, dmax);
         }

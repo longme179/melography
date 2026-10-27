@@ -286,6 +286,30 @@ stayed green. The full-chain parity gate failed at 3.9e-2 on Metal
 (20× budget) on its first execution; the fix routes the response
 through the halated plane per FILM_MODEL §C2→§D (chain invariants —
 determinism, tiled≡mono — unaffected; no gate pinned the buggy bytes).
+**And its CI rounds 8–15 caught a second, mono-only divergence**
+(3.924e-2 on classic-monochrome-400, every other stock at 1e-6,
+identical in every lens config): the WGSL respond stage replicated
+the mono density into channels 1/2 (`d = vec3(d.x)`) while the CPU
+writes `[D, 0, 0]` (emulsion.rs fills layer 0 only). The print stage
+reads layer 0 only, so every post-print gate — including the A2.4
+`film_pixel_parity` battery — stayed green; but the grain σ(D) reads
+the density-plane *luminance* (0.25/0.5/0.25), so the CPU σ saw
+0.25·D while the GPU saw D. classic-monochrome-400's C3 anchor makes
+it worse: `m_exc` sums RGB into layer 0 but the anchor averages the
+logs of all three layers (two of them zero → log10(1e-12)), so
+`exposure_scale ≈ 1.6e6` saturates the H&D shoulder — D = 1.84 flat
+over the whole test image, making the σ bias a CONSTANT ~35% on
+every grain cell (hence the config-invariant worst). Pinned by the
+Leg A/B/C diagnostics (legA still failed with the standalone grain
+runner; legB clean at 8.3e-7; legC — now a standing gate in
+`film/src/gpu_chain.rs` — diffs the pre-print respond plane directly,
+the one place print-clamped divergence can hide). Fix: the shader
+mirrors the CPU plane exactly (no replication). The mono model
+questions this exposed — the saturated C3 anchor and the σ-curve
+knots 1.2/2.0 unreachable through the 0.25·D luminance read — are
+documented in FILM_MODEL §G/§D as owner-decision follow-ups (same
+family as the stock's psd_slope authoring artifact); the CPU behavior
+is deliberately unchanged in this slice.
 Parity gates (`gpu_chain_parity`, runs in the workspace suite via the
 self-dev-dep M0 pattern): full chain vs the CPU monolithic render ≤
 2e-3 (each constituent kernel holds 1e-3 standalone; the composition
