@@ -28,7 +28,10 @@ melography-color = { path = "../../crates/color" }
 melography-io = { path = "../../crates/io" }
 melography-lut = { path = "../../crates/lut" }
 melography-presets = { path = "../../crates/presets" }
-melography-film = { path = "../../crates/film" }
+# A2.4: gpu-chain turns on the full-chain GPU preview composition; the
+# direct gpu dep is the context/policy surface (`gpu.rs`, `gpu_status`).
+melography-film = { path = "../../crates/film", features = ["gpu-chain"] }
+melography-gpu = { path = "../../crates/gpu", features = ["wgpu"] }
 melography-ai = { path = "../../crates/ai" }
 # The CLI lib is the shared *headless pipeline* (decode→S1→LUT→S5→encode
 # composition, ApplyOptions); both front ends consume it — ARCHITECTURE §2

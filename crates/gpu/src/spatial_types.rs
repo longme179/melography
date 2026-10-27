@@ -85,6 +85,14 @@ pub struct GrainGpuParams {
 /// h+v gaussian mixture per channel with per-channel gain α. A channel
 /// with `radius == 0` is inactive (pass-through), matching the CPU
 /// `apply_halation` skip for `alpha ≤ 0` or identity kernels.
+///
+/// A2.4 — `blend` selects the veiling §B mix on the SAME h+v dispatch
+/// structure: `true` computes `(1−α)·src + α·G₂D(src)` (the CPU
+/// `apply_veiling_mix` formula) instead of the additive
+/// `src + α·G₂D(src)`. The unit-DC taps are identical either way; only
+/// the vertical-pass combine differs (params slot [0], one bit per
+/// channel). Halation packs `blend = [false; 3]` — bit-compatible with
+/// every pre-A2.4 packed payload.
 #[derive(Debug, Clone)]
 pub struct HalationGpuParams {
     pub w: u32,
@@ -96,7 +104,34 @@ pub struct HalationGpuParams {
     /// Flat tap array; channel c's `2·radius[c]+1` unit-DC taps start at
     /// `tap_offset[c]`.
     pub tap_offset: [u32; 3],
+    /// Per-channel combine mode: `false` = additive halation
+    /// (`src + α·G`), `true` = veiling blend (`(1−α)·src + α·G`).
+    pub blend: [bool; 3],
     pub taps: Vec<f32>,
+}
+
+/// Parameters for the vignette kernel (FILM_MODEL §B) — the lens
+/// falloff `e · cos(r_n·half_fov)^k` with `r_n` from per-column and
+/// per-row offsets. Following the A2.3 lesson, positions are shipped
+/// as CPU-resolved (f64 → f32) per-column `u−c_u` and per-row `v−c_v`
+/// LUTs, so the shader only ever does small-number math — no absolute
+/// film coordinates, no accumulated error.
+#[derive(Debug, Clone)]
+pub struct VignetteGpuParams {
+    pub w: u32,
+    pub h: u32,
+    /// Half diagonal of the frame in mm (the r_n normalizer).
+    pub half_diag_mm: f32,
+    /// Half the lens field of view, radians.
+    pub half_fov_rad: f32,
+    /// Falloff exponent `k = 4·vignette_amount` (> 0; `k ≤ 0` is the
+    /// exact identity on both sides and the orchestrator skips the
+    /// dispatch entirely).
+    pub k: f32,
+    /// Per-column `u − frame_centre_u` in mm (length `w`).
+    pub du: Vec<f32>,
+    /// Per-row `v − frame_centre_v` in mm (length `h`).
+    pub dv: Vec<f32>,
 }
 
 /// Packed f32 layout for the grain kernel (documented; the WGSL side
@@ -189,7 +224,8 @@ pub(crate) fn pack_grain(params: &GrainGpuParams) -> Result<Vec<f32>, String> {
 /// Packed f32 layout for the halation kernels:
 ///
 /// ```text
-/// [0]   flags (u32 bits): unused (reserved; 0)
+/// [0]   flags (u32 bits): bit c = blend mode for channel c
+///       (0 = additive halation, 1 = veiling blend); halation = 0
 /// [1]   w    (u32 bits)
 /// [2]   h    (u32 bits)
 /// [3..6)    radius[c]     (u32 bits; 0 = inactive)
@@ -199,8 +235,14 @@ pub(crate) fn pack_grain(params: &GrainGpuParams) -> Result<Vec<f32>, String> {
 /// ```
 #[allow(dead_code)]
 pub(crate) fn pack_halation(params: &HalationGpuParams) -> Result<Vec<f32>, String> {
+    let mut blend_flags = 0u32;
+    for c in 0..3 {
+        if params.blend[c] {
+            blend_flags |= 1 << c;
+        }
+    }
     let mut v: Vec<f32> = Vec::with_capacity(12 + params.taps.len());
-    v.push(f32::from_bits(0));
+    v.push(f32::from_bits(blend_flags));
     v.push(f32::from_bits(params.w));
     v.push(f32::from_bits(params.h));
     for c in 0..3 {
@@ -211,6 +253,41 @@ pub(crate) fn pack_halation(params: &HalationGpuParams) -> Result<Vec<f32>, Stri
     }
     v.extend_from_slice(&params.alpha);
     v.extend_from_slice(&params.taps);
+    Ok(v)
+}
+
+/// Packed f32 layout for the vignette kernel:
+///
+/// ```text
+/// [0]      flags (u32 bits): reserved; 0
+/// [1]      w    (u32 bits)
+/// [2]      h    (u32 bits)
+/// [3]      half_diag_mm
+/// [4]      half_fov_rad
+/// [5]      k
+/// [6..6+w)      du per column (mm)
+/// [6+w..6+w+h)  dv per row (mm)
+/// ```
+#[allow(dead_code)]
+pub(crate) fn pack_vignette(params: &VignetteGpuParams) -> Result<Vec<f32>, String> {
+    if params.du.len() != params.w as usize || params.dv.len() != params.h as usize {
+        return Err(format!(
+            "vignette kernel: LUT lengths ({}, {}) do not match w×h ({}, {})",
+            params.du.len(),
+            params.dv.len(),
+            params.w,
+            params.h
+        ));
+    }
+    let mut v: Vec<f32> = Vec::with_capacity(6 + params.du.len() + params.dv.len());
+    v.push(f32::from_bits(0));
+    v.push(f32::from_bits(params.w));
+    v.push(f32::from_bits(params.h));
+    v.push(params.half_diag_mm);
+    v.push(params.half_fov_rad);
+    v.push(params.k);
+    v.extend_from_slice(&params.du);
+    v.extend_from_slice(&params.dv);
     Ok(v)
 }
 
@@ -316,6 +393,7 @@ mod tests {
             alpha: [0.045, 0.008, 0.0],
             radius: [10, 5, 0],
             tap_offset: [0, 21, 0],
+            blend: [false; 3],
             // Power-of-two step: every value exactly representable in
             // f32 (the layout test compares bits, not tolerances).
             taps: (0..31).map(|i| i as f32 * 0.125).collect(),
@@ -326,6 +404,7 @@ mod tests {
     fn halation_pack_layout() {
         let p = pack_halation(&halation()).unwrap();
         assert_eq!(p.len(), 12 + 31);
+        assert_eq!(p[0].to_bits(), 0, "halation: no blend flags");
         assert_eq!(p[1].to_bits(), 64, "w bits");
         assert_eq!(p[2].to_bits(), 48, "h bits");
         assert_eq!(p[3].to_bits(), 10, "radius[0] bits");
@@ -336,5 +415,48 @@ mod tests {
         assert_eq!(p[9], 0.045, "alpha[0]");
         assert_eq!(p[12], 0.0, "taps[0]");
         assert_eq!(p[12 + 30], 3.75, "taps[30]");
+    }
+
+    #[test]
+    fn halation_blend_flags_pack() {
+        // Veiling (A2.4): all three channels blend → bits 0|1|2 = 7.
+        let mut h = halation();
+        h.blend = [true, true, true];
+        let p = pack_halation(&h).unwrap();
+        assert_eq!(p[0].to_bits(), 0b111, "veiling: blend on every channel");
+        // Mixed packs stay per-channel.
+        h.blend = [false, true, false];
+        let p = pack_halation(&h).unwrap();
+        assert_eq!(p[0].to_bits(), 0b010);
+    }
+
+    #[test]
+    fn vignette_pack_layout() {
+        let v = VignetteGpuParams {
+            w: 4,
+            h: 3,
+            half_diag_mm: 21.633_308,
+            half_fov_rad: 0.34906585,
+            k: 1.0,
+            du: vec![-18.0, -6.0, 6.0, 18.0],
+            dv: vec![-12.0, 0.0, 12.0],
+        };
+        let p = pack_vignette(&v).unwrap();
+        assert_eq!(p.len(), 6 + 4 + 3);
+        assert_eq!(p[0].to_bits(), 0, "flags reserved");
+        assert_eq!(p[1].to_bits(), 4, "w bits");
+        assert_eq!(p[2].to_bits(), 3, "h bits");
+        assert_eq!(p[3], 21.633_308, "half_diag");
+        assert_eq!(p[4], 0.34906585, "half_fov");
+        assert_eq!(p[5], 1.0, "k");
+        assert_eq!(p[6], -18.0, "du[0]");
+        assert_eq!(p[6 + 4], -12.0, "dv[0]");
+        assert_eq!(p[6 + 4 + 2], 12.0, "dv[2]");
+        // Length contract: du must match w, dv must match h.
+        let bad = VignetteGpuParams {
+            dv: vec![0.0],
+            ..v.clone()
+        };
+        assert!(pack_vignette(&bad).is_err());
     }
 }

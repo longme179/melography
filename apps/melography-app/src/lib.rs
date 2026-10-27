@@ -16,6 +16,7 @@ pub mod cache;
 pub mod commands;
 pub mod error;
 pub mod export;
+pub mod gpu;
 pub mod recents;
 pub mod render;
 pub mod settings;
@@ -156,6 +157,8 @@ pub fn run() {
                 commands::get_settings,
                 commands::set_settings,
                 commands::cache_stats,
+                // A2.4 — Settings "Graphics": the honest adapter rows.
+                commands::gpu_status,
                 commands::list_recents,
                 commands::purge_recents,
                 commands::list_presets,

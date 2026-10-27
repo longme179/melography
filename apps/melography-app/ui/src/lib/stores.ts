@@ -168,9 +168,34 @@ export interface AppSettings {
   preview_max_dim: number;
   cache_budget_mb: number;
   gpu_enabled: boolean;
+  /** "auto" or an adapter fingerprint (A2.4 Graphics picker). */
+  gpu_adapter: string;
   update_channel: string;
   offline_mode: boolean;
   log_level: string;
+}
+
+/** One adapter row in the Graphics picker (A2.4 `gpu_status`). */
+export interface GpuAdapter {
+  name: string;
+  vendor: number;
+  backend: string;
+  deviceType: string;
+  score: number;
+  fingerprint: string;
+  active: boolean;
+  selected: boolean;
+}
+
+/** The honest GPU state (A2.4 `gpu_status`). */
+export interface GpuStatus {
+  mode: string;
+  gpuEnabled: boolean;
+  sessionDisabled: boolean;
+  reason: string | null;
+  activeAdapter: GpuAdapter | null;
+  adapters: GpuAdapter[];
+  uncapturedError: string | null;
 }
 
 export interface RecentItem {

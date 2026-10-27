@@ -265,25 +265,27 @@ fn worker_cap(h: u32, m_total: u32) -> u32 {
 /// Stages resolved ONCE per render and shared read-only by every strip
 /// (and, in [`render_threaded`], by every worker thread — every field is
 /// plain data, so the struct is `Sync` by construction).
-struct ChainStages {
-    frame: FilmFrame,
-    lens: LensParams,
-    em: Emulsion,
-    grain: GrainStage,
-    print: Print,
-    veiling: GaussianKernel,
-    veiling_on: bool,
+/// `pub(crate)` (A2.4): the GPU chain (`gpu_chain`) resolves the same
+/// stages and packs them for the WGSL kernels.
+pub(crate) struct ChainStages {
+    pub(crate) frame: FilmFrame,
+    pub(crate) lens: LensParams,
+    pub(crate) em: Emulsion,
+    pub(crate) grain: GrainStage,
+    pub(crate) print: Print,
+    pub(crate) veiling: GaussianKernel,
+    pub(crate) veiling_on: bool,
     /// Recipe knobs the strip body needs per pixel (the rest are folded
     /// into the resolved stages above).
-    ev: f64,
-    pre_desaturate: f64,
-    m_veiling: u32,
-    m_halation: u32,
-    m_grain: u32,
+    pub(crate) ev: f64,
+    pub(crate) pre_desaturate: f64,
+    pub(crate) m_veiling: u32,
+    pub(crate) m_halation: u32,
+    pub(crate) m_grain: u32,
 }
 
 impl ChainStages {
-    fn resolve(params: &FilmChainParams, w: u32, h: u32) -> Self {
+    pub(crate) fn resolve(params: &FilmChainParams, w: u32, h: u32) -> Self {
         let frame = FilmFrame::from_dims(w, h, params.profile.crop_rule);
         let mmpp = frame.mm_per_pixel;
 
@@ -431,20 +433,26 @@ fn render_strip(
         (r2.lo(y3), r2.hi(y3)),
     );
 
-    // -- Response D + chemistry E over r1 (in-place per-pixel) -------------
-    emulsion::apply_response_inplace(plane_a, r1.lo(y3), r1.hi(y3), em);
+    // -- Response D + chemistry E over r1 of plane_b — the HALATED ----------
+    // excitation, per FILM_MODEL §C2→§D (X_halo = X + H(X) feeds the H&D
+    // curves). Until A2.4 this stage ran on plane_a (the un-halated X)
+    // and the halation output below was computed and then discarded —
+    // the full-chain GPU parity gate caught it on its first real run
+    // (worst |Δ| 3.9e-2 on classic-monochrome-400): halation was
+    // visually dead in every CPU render since M2.
+    emulsion::apply_response_inplace(plane_b, r1.lo(y3), r1.hi(y3), em);
 
-    // -- Grain G over the strip (reads the r1 window) → plane_b ------------
-    grain.apply(plane_a, plane_b, strip_y - y3, strip_y1 - y3, frame, y3, h);
+    // -- Grain G over the strip (reads plane_b's r1 window) → plane_a ------
+    grain.apply(plane_b, plane_a, strip_y - y3, strip_y1 - y3, frame, y3, h);
 
-    // -- Print/scan F over the strip → plane_a, then into the output ------
-    print.apply(plane_b, plane_a, strip_y - y3, strip_y1 - y3);
+    // -- Print/scan F over the strip → plane_b, then into the output ------
+    print.apply(plane_a, plane_b, strip_y - y3, strip_y1 - y3);
     for ay in strip_y..strip_y1 {
         let plane_row = ay - y3; // strip-local plane row of this output row
         let out_row = (ay - out_origin) as usize;
         let out_base = out_row * w as usize * 3;
         for x in 0..w {
-            let v = plane_a.px64(x, plane_row);
+            let v = plane_b.px64(x, plane_row);
             let i = out_base + x as usize * 3;
             out[i] = v[0] as f32;
             out[i + 1] = v[1] as f32;

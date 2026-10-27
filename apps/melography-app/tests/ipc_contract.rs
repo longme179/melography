@@ -18,9 +18,9 @@
 use melography_ai::manager::{ModelInfo, ModelState};
 use melography_app_lib::batch::{BatchJob, BatchQueue, JobStatus};
 use melography_app_lib::commands::{
-    cache_stats_json, FilmStateJson, ImageInfo, ImportLutArgs, LutRecordJson, LutStackEntry,
-    LutStackJson, PresetJson, RecentJson, StateJson, StockJson, StockThumbJson, SuggestionJson,
-    ToneStateJson,
+    cache_stats_json, FilmStateJson, GpuAdapterJson, GpuStatusJson, ImageInfo, ImportLutArgs,
+    LutRecordJson, LutStackEntry, LutStackJson, PresetJson, RecentJson, StateJson, StockJson,
+    StockThumbJson, SuggestionJson, ToneStateJson,
 };
 use melography_app_lib::export::ExportSpec;
 use melography_app_lib::state::EditorState;
@@ -452,6 +452,30 @@ fn samples() -> Vec<(&'static str, Value)> {
         ("RecentItem", serde_json::to_value(&recent).unwrap()),
         ("UserPreset", serde_json::to_value(&preset).unwrap()),
         ("StockThumb", serde_json::to_value(&thumb).unwrap()),
+        // A2.4 — the Graphics picker wire type (GpuAdapter recurses via
+        // the `adapters` array and `active_adapter`).
+        (
+            "GpuStatus",
+            serde_json::to_value(GpuStatusJson {
+                mode: "auto".into(),
+                gpu_enabled: true,
+                session_disabled: false,
+                reason: None,
+                active_adapter: None,
+                adapters: vec![GpuAdapterJson {
+                    name: "Test GPU".into(),
+                    vendor: 4098,
+                    backend: "Metal".into(),
+                    device_type: "Discrete".into(),
+                    score: 403,
+                    fingerprint: "Test GPU|4098|Metal|Discrete".into(),
+                    active: true,
+                    selected: true,
+                }],
+                uncaptured_error: None,
+            })
+            .unwrap(),
+        ),
         ("BatchJob", batch_job.to_json()),
         ("BatchSnapshot", BatchQueue::new().snapshot()),
         (

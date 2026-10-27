@@ -346,7 +346,14 @@ export async function weightsFileDialog(): Promise<string | null> {
 
 // ── M4 #23: settings · recents (S1) · presets (S5) · color panel ───────────
 
-import type { AppSettings, RecentItem, UserPreset, StockThumb, WbGains } from "./stores";
+import type {
+  AppSettings,
+  GpuStatus,
+  RecentItem,
+  UserPreset,
+  StockThumb,
+  WbGains,
+} from "./stores";
 
 export async function getSettings(): Promise<AppSettings> {
   return invoke<AppSettings>("get_settings");
@@ -354,6 +361,11 @@ export async function getSettings(): Promise<AppSettings> {
 
 export async function setSettings(settings: AppSettings): Promise<AppSettings> {
   return invoke<AppSettings>("set_settings", { settings });
+}
+
+/** A2.4 — the honest GPU state for the Settings Graphics section. */
+export async function gpuStatus(): Promise<GpuStatus> {
+  return invoke<GpuStatus>("gpu_status");
 }
 
 export async function listRecents(): Promise<RecentItem[]> {

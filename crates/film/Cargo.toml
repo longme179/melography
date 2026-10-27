@@ -18,3 +18,18 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 melography-presets = { workspace = true }
+
+[features]
+# A2.4 — the full-chain GPU preview composition (WGSL kernels over a
+# persistent context). Off by default so the processing workspace (and
+# the CLI memory-budget suites — feature unification never sees this)
+# stays light; the app turns it on, and the self dev-dependency below
+# runs the parity gates in `cargo test --workspace` (the M0 pattern).
+gpu-chain = ["melography-gpu/wgpu"]
+
+# Self dev-dependency: turns `gpu-chain` on for this crate's OWN tests
+# without forcing it on downstream users (CI's workspace run therefore
+# executes gpu_chain_parity on real adapters).
+[dev-dependencies.melography-film]
+features = ["gpu-chain"]
+path = "."

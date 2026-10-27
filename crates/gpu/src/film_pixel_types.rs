@@ -41,12 +41,22 @@ pub struct FilmPixelGpuParams {
     /// counts — the packer rejects anything else, honestly).
     pub hd_curves: Vec<CurveGpu>,
     pub paper_curves: Vec<CurveGpu>,
+    /// A2.4 stage selection (which per-pixel stages this dispatch runs):
+    /// bit 0 = excitation (§A5 pre-desat + §C1/C3), bit 1 = response
+    /// (§D/§E), bit 2 = print (§F). `7` = the fused all-stages dispatch
+    /// (the pre-A2.4 behaviour, and what standalone parity legs use);
+    /// the full-chain GPU composition runs 1, 2 and 4 as separate
+    /// dispatches with the spatial kernels (veiling/halation/grain)
+    /// interleaved between them — same math, f32 buffer round-trips are
+    /// lossless, so split ≡ fused is gated bit-exact.
+    pub stage: u8,
 }
 
 /// Packed f32 layout (documented; the WGSL side decodes the same offsets):
 ///
 /// ```text
-/// [0]  flags = mono | reversal<<1 | path<<2
+/// [0]  flags = mono | reversal<<1 | path<<2 | stage<<4
+///      (path is 2 bits: <<2 and <<3; stage is 3 bits, A2.4)
 /// [1]  n_hd (control points per layer)
 /// [2]  n_paper
 /// [3]  x_floor
@@ -96,6 +106,7 @@ pub(crate) fn pack(params: &FilmPixelGpuParams) -> Result<Vec<f32>, String> {
         flags |= 2;
     }
     flags |= params.path << 2;
+    flags |= u32::from(params.stage & 7) << 4;
     p.push(flags as f32);
     p.push(n_hd as f32);
     p.push(n_pp as f32);
@@ -190,6 +201,7 @@ mod tests {
             scanner_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             hd_curves: vec![curve(4)],
             paper_curves: vec![curve(5)],
+            stage: 7,
         };
         let packed = pack(&p).unwrap();
         // 59 fixed + 3·(3·n_hd) + 3·(3·n_pp)
